@@ -1,0 +1,788 @@
+---
+title: "Analysis of contextualized sensorimotor norms"
+author: "Anonymous"
+date: "September 27, 2021"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    # code_folding: hide
+  pdf_document: default
+  word_document:
+    toc: yes
+---
+
+```{r include=FALSE}
+library(tidyverse)
+library(lme4)
+library(ggridges)
+library(broom.mixed)
+library(lmerTest)
+library(corrplot)
+```
+
+# Introduction
+
+In this document, we analyze the **contextualized sensorimotor norms**: judgments about the strength of different sensorimotor dimensions of ambiguous words, in context.
+
+We use these norms in several analyses:
+
+1. First, we compare them to the corresponding dimensions for the "decontextualized" Lancaster sensorimotor norms. 
+2. Second, we ask whether the **dominance** of a word sense is correlated with its sensorimotor strength, i.e., whether more concrete meanings tend to be rated as more dominant.  
+3. Third, we ask whether the **sensorimotor distance** between two contexts of use predicts judgments of how **related** those meanings are, above and beyond their distributional similarity and whether or not they belong to the same sense.
+4. Fourth, we use **sensorimotor distance** to predict behavior on a primed sensibility judgment task.
+
+
+
+# Characterizing dimensions
+
+First, load the data.
+
+```{r}
+df_contextualized_meanings = read_csv("../../data/processed/contextualized_sensorimotor_norms.csv")
+nrow(df_contextualized_meanings)
+```
+
+
+## Visualizing distributions
+
+```{r}
+df_contextualized_meanings_long = df_contextualized_meanings %>%
+  pivot_longer(cols = c(Vision.M, Hearing.M, Olfaction.M,
+                        Taste.M, Interoception.M, Touch.M,
+                        Mouth_throat.M, Head.M, Torso.M,
+                        Hand_arm.M, Foot_leg.M),
+               names_to = "Dimension",
+               values_to = "Strength") %>%
+  mutate(Dimension = gsub('.M', '', Dimension))
+
+df_contextualized_meanings_long %>%
+  ggplot(aes(x = reorder(Dimension, Strength),
+             y = Strength)) +
+  geom_violin() +
+  geom_jitter(alpha = .1,
+              width = .1) +
+  coord_flip() +
+  labs(y = "Sensorimotor strength",
+       x = "Dimension") +
+  theme_bw() +
+  theme(text = element_text(size=20))
+
+ggsave("../../Figures/acl2022/distributions.pdf", dpi = 300)
+
+```
+
+
+## Correlations across dimensions
+
+```{r}
+columns = df_contextualized_meanings %>%
+  mutate(Vision = Vision.M,
+         Hearing = Hearing.M, 
+         Olfaction = Olfaction.M,
+         Taste = Taste.M, 
+         Interoception = Interoception.M, 
+         Touch = Touch.M,
+         Mouth_throat = Mouth_throat.M,
+         Head = Head.M,
+         Torso = Torso.M,
+         Hand_arm = Hand_arm.M, 
+         Foot_leg = Foot_leg.M) %>%
+  select(Vision, Hearing, Olfaction,
+         Taste, Interoception, Touch,
+         Mouth_throat, Head, Torso,
+         Hand_arm, Foot_leg)
+cors = cor(columns)
+
+cors[lower.tri(cors, diag=TRUE)] <- 0
+
+pdf(file="../../Figures/acl2022/corr.pdf")
+
+corrplot(cors, 
+         type = "upper",
+         method = "circle",
+         # method = "ellipse",
+         tl.col = "black",
+         tl.cex = 1.2)
+
+dev.off()
+
+# pdf("../../Figures/acl2022/corr.pdf")
+
+```
+
+## Visualizing specific words
+
+
+```{r}
+df_contextualized_meanings_long %>%
+  group_by(word, Dimension) %>%
+  mutate(Strength_scaled = scale(Strength)) %>%
+  filter(word == "market") %>%
+  ggplot(aes(x = reorder(Dimension, Strength_scaled),
+             y = Strength_scaled,
+             fill = Dimension)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "Dimension",
+       y = "Sensorimotor Strength (z-scored)") +
+  facet_wrap(~sentence) +
+  theme(text = element_text(size=16)) +
+  guides(fill=FALSE)
+
+ggsave("../../Figures/acl2022/market_raw_z.pdf", dpi = 300)
+```
+
+
+# Predicting dominance
+
+## Load and merge data
+
+Load the item-level means for the sensorimotor norms.
+
+```{r}
+df_contextualized_meanings = read_csv("../../data/processed/contextualized_sensorimotor_norms_with_ls.csv")
+nrow(df_contextualized_meanings)
+```
+
+
+Load the dominance norms.
+
+```{r}
+df_dominance = read_csv("../../data/processed/dominance_norms_with_order.csv")
+
+## Determine the specific sense/meaning of the righthand context
+df_dominance = df_dominance %>%
+  mutate(context = substr(version_with_order, 6, 9)) 
+
+## Now group by that righthand context to get relative dominance of that meaning
+df_dominance_individual = df_dominance %>%
+  group_by(word, context) %>%
+  summarise(dominance = mean(dominance_right))
+nrow(df_dominance_individual)
+
+```
+
+Merge the dominance and sensorimotor norms data.
+
+```{r}
+df_dom_plus_sm = df_contextualized_meanings %>%
+  inner_join(df_dominance_individual, on = c(word, context))
+nrow(df_dom_plus_sm)
+```
+
+
+We also load and merge the Lancaster norms, as a control.
+
+```{r}
+df_lancaster = read_csv("../../data/lexical/lancaster_norms.csv")
+
+df_lancaster = df_lancaster %>%
+  mutate(word = tolower(Word)) %>%
+  select(-Foot_leg.SD, -Torso.SD, -Head.SD, -Hand_arm.SD)
+
+df_dom_plus_sm = df_dom_plus_sm %>%
+  inner_join(df_lancaster, on = word)
+nrow(df_dom_plus_sm)
+```
+
+
+## Calculating contextualized sensorimotor strength
+
+Based on Lynott et al (2019), we **contextualized sensorimotor strength** as the *maximum* strength across all the dimensions.
+
+```{r}
+df_dom_plus_sm = df_dom_plus_sm %>%
+  rowwise() %>%
+  mutate(max_strength = max(
+    c(
+      ## Modalities
+      Vision.M,
+      Hearing.M,
+      Olfaction.M,
+      Touch.M,
+      Taste.M, 
+      Interoception.M,
+      ## Effectors
+      Head.M,
+      Mouth_throat.M,
+      Torso.M,
+      Hand_arm.M,
+      Foot_leg.M
+    )
+  ),
+  max_perceptual_strength = max(
+    c(
+      ## Modalities
+      Vision.M,
+      Hearing.M,
+      Olfaction.M,
+      Touch.M,
+      Taste.M, 
+      Interoception.M
+    )
+  ),
+  max_action_strength = max(
+    c(
+      ## Effectors
+      Head.M,
+      Mouth_throat.M,
+      Torso.M,
+      Hand_arm.M,
+      Foot_leg.M
+    )
+  )
+  ) %>%
+  ungroup()
+
+df_dom_plus_sm %>%
+  ggplot(aes(x = Max_strength.sensorimotor,
+             y = max_strength)) +
+  geom_point(alpha = .5) +
+  labs(y = "Maximum Contextualized Strength",
+       x = "Maximum Strength (Lancaster)") +
+  theme_bw()
+```
+
+
+## Does contextualized sensorimotor strength predict dominance?
+
+The answer is **yes**: contexts with a higher *maximum* sensorimotor strength also tend to be rated as more *dominant*.
+
+Notably, this is true above and beyond the *decontextualized* ratings of sensorimotor strength for a given word.
+
+```{r}
+df_dom_plus_sm %>%
+  ggplot(aes(x = max_strength,
+             y = dominance)) +
+  geom_point(alpha = .4) +
+  geom_smooth(method = "lm") +
+  labs(x = "Maximum Contextualized Strength",
+       y = "Dominance") +
+  theme_bw()
+
+model_full = lmer(data = df_dom_plus_sm,
+                dominance ~ 
+                  max_strength +
+                  Max_strength.sensorimotor + Minkowski3.sensorimotor +
+                  (1 | word),
+                REML = FALSE)
+
+model_reduced = lmer(data = df_dom_plus_sm,
+                dominance ~ 
+                  # max_strength + 
+                  Max_strength.sensorimotor + Minkowski3.sensorimotor +
+                  (1 | word),
+                REML = FALSE)
+summary(model_full)
+anova(model_full, model_reduced)
+
+df_dom_plus_sm %>%
+  mutate(resid = residuals(model_reduced)) %>%
+  ggplot(aes(x = max_strength,
+             y = resid)) +
+  geom_point(alpha = .4) +
+  geom_smooth(method = "lm") +
+  labs(x = "Maximum Contextualized Strength",
+       y = "Residuals (Reduced model)") +
+  theme_bw()
+
+```
+
+## Comparing dimensions to Lancaster
+
+Now, we compare each dimension to the LS Norms.
+
+```{r}
+df_diffs = df_dom_plus_sm %>%
+  mutate(vision_diff = (Vision.M - Visual.mean),
+         auditory_diff = (Hearing.M - Auditory.mean),
+         intero_diff = (Interoception.M - Interoceptive.mean),
+         olfactory_diff = (Olfaction.M - Olfactory.mean),
+         touch_diff = (Touch.M - Haptic.mean),
+         taste_diff = (Taste.M - Gustatory.mean),
+         torso_diff = (Torso.M - Torso.mean),
+         hand_arm_diff = (Hand_arm.M - Hand_arm.mean),
+         foot_leg_diff = (Foot_leg.M - Foot_leg.mean),
+         head_diff = (Head.M - Head.mean),
+         mouth_throat_diff = (Mouth_throat.M - Mouth.mean)) %>%
+  pivot_longer(cols = c(vision_diff,
+                        auditory_diff,
+                        intero_diff,
+                        olfactory_diff,
+                        touch_diff,
+                        taste_diff,
+                        torso_diff,
+                        hand_arm_diff,
+                        foot_leg_diff,
+                        head_diff,
+                        mouth_throat_diff), 
+               names_to = "Dimension",
+               values_to = "Diff") %>%
+  mutate(Dimension = gsub('_diff', '', Dimension)) %>%
+  mutate(Dimension = case_when(
+    Dimension == "intero" ~ "Interoception",
+    Dimension == "auditory" ~ "Hearing",
+    Dimension == "olfactory" ~ "Olfaction",
+    TRUE ~ str_to_title(Dimension)
+  ))
+
+df_diffs$Dimension = factor(df_diffs$Dimension,
+                            levels = rev(c(
+                              'Vision',
+                              'Hearing',
+                              'Olfaction',
+                              'Taste',
+                              'Interoception',
+                              'Touch',
+                              'Mouth_throat',
+                              'Head',
+                              'Torso',
+                              'Hand_arm',
+                              'Foot_leg'
+                            )))
+df_diffs %>%
+  filter(word == "market") %>%
+  ggplot(aes(x = Dimension,
+             y = Diff,
+             fill = Dimension)) +
+  geom_bar(stat = "summary") + 
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "Dimension",
+       y = "Deviation from Lancaster Norms") +
+  facet_wrap(~sentence) +
+  theme(text = element_text(size=16)) +
+  guides(fill = FALSE)
+
+ggsave("../../Figures/acl2022/market.pdf", dpi = 300)
+
+
+```
+
+We also look at this across *all* words:
+
+```{r}
+df_diffs %>%
+  ggplot(aes(x = reorder(Dimension, Diff),
+             y = Diff)) +
+  geom_violin() +
+  geom_jitter(alpha = .1,
+              width = .1) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "Dimension",
+       y = "Deviation from Lancaster Norms") +
+  theme(text = element_text(size=16))
+```
+
+
+## How does dominance relate to deviation from the LS Norms?
+
+This question can in turn be decomposed into two questions:
+
+First, are more dominant senses **closer** to the LS Norms overall? We might expect this to be the case if the LS Norms reflect the dominant sense; that is, when people rate the sensorimotor properties of a decontextualized word, they might be more likely to index properties associated with the most dominant contexts or meanings of that word.
+
+```{r}
+model_with_dominance = lmer(data = df_dom_plus_sm,
+                  distance_to_lancaster ~ dominance + (1 | word),
+                  REML = FALSE)
+
+model_no_dominance = lmer(data = df_dom_plus_sm,
+                  distance_to_lancaster ~ (1 | word),
+                  REML = FALSE)
+
+summary(model_with_dominance)
+anova(model_with_dominance, model_no_dominance)
+
+df_dom_plus_sm %>%
+  ggplot(aes(x = dominance,
+             y = distance_to_lancaster)) +
+  geom_point(alpha = .5) +
+  geom_smooth(method = "lm") +
+  labs(x = "Dominance",
+       y = "Cosine Distance to Decontextualized LS Norm") +
+  theme_bw()
+
+cor.test(df_dom_plus_sm$dominance, df_dom_plus_sm$distance_to_lancaster)
+```
+
+And second: does dominance predict the **direction** of difference?
+
+The earlier analysis of dominance suggests that more dominant senses are more concrete than less dominant senses. Thus, we might expect that more dominant senses are also more concrete on average than the decontextualized norms. 
+
+```{r}
+df_diffs_avg = df_diffs %>%
+  group_by(word, sentence, context) %>%
+  summarise(mean_diff = mean(Diff))
+
+
+df_diffs_avg = df_diffs_avg %>%
+  left_join(df_dom_plus_sm)
+
+model_with_dominance = lmer(data = df_diffs_avg,
+                  mean_diff ~ dominance + (1 | word),
+                  REML = FALSE)
+
+model_no_dominance = lmer(data = df_diffs_avg,
+                  mean_diff ~ (1 | word),
+                  REML = FALSE)
+
+summary(model_with_dominance)
+anova(model_with_dominance, model_no_dominance)
+
+cor.test(df_diffs_avg$dominance, df_diffs_avg$mean_diff)
+
+df_diffs_avg %>%
+  ggplot(aes(x = dominance,
+             y = mean_diff,
+             color = max_strength)) +
+  geom_point(alpha = .5) +
+  geom_smooth(method = "lm") +
+  labs(x = "Dominance",
+       y = "Average Deviation from LS Norms") +
+  theme_bw()
+```
+
+
+
+# Predicting relatedness 
+
+Next, we ask about the **sensorimotor distance** between two sentence pairs, and whether it correlates both with `same/different sense` and the `mean_relatedness` judgments for those sentence pairs.
+
+Here, we load a version of the dataset that also contains a *baseline* measure: the sensorimotor distance as calculated using a bag-of-words approach (i.e., using the original Lancaster Norms).
+
+## Load data
+
+```{r}
+df_rawc_with_norms = read_csv("../../data/processed/sentence_pairs_with_sensorimotor_distance.csv") %>%
+  select(-X1) %>%
+  drop_na(sensorimotor_distance)
+
+nrow(df_rawc_with_norms)
+```
+
+## How well does sensorimotor distance track same/different sense?
+
+
+```{r}
+df_rawc_with_norms %>%
+  ggplot(aes(x = sensorimotor_distance,
+             y = ambiguity_type,
+             fill = same)) +
+  geom_density_ridges2(aes(height = ..density..), 
+                       color=gray(0.25), 
+                       alpha = 0.5, 
+                       scale=0.85, 
+                       size=.9, 
+                       stat="density") +
+  labs(x = "Sensorimotor Distance",
+       y = "Ambiguity Type",
+       fill = "Same Sense") +
+  # scale_x_continuous(limits = c(0, 1)) +
+  scale_fill_viridis_d() +
+  theme_minimal() +
+  theme(text = element_text(size=20))
+
+ggsave("../../Figures/acl2022/same_diff.pdf", dpi = 300)
+
+df_rawc_with_norms %>%
+  ggplot(aes(x = perceptual_distance,
+             y = ambiguity_type,
+             fill = same)) +
+  geom_density_ridges2(aes(height = ..density..), 
+                       color=gray(0.25), 
+                       alpha = 0.5, 
+                       scale=0.85, 
+                       size=.9, 
+                       stat="density") +
+  labs(x = "Perceptual Distance",
+       y = "Ambiguity type") +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_fill_viridis_d() +
+  theme_minimal()
+
+
+df_rawc_with_norms %>%
+  ggplot(aes(x = action_distance,
+             y = ambiguity_type,
+             fill = same)) +
+  geom_density_ridges2(aes(height = ..density..), 
+                       color=gray(0.25), 
+                       alpha = 0.5, 
+                       scale=0.85, 
+                       size=.9, 
+                       stat="density") +
+  labs(x = "Action Distance",
+       y = "Ambiguity type") +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_fill_viridis_d() +
+  theme_minimal()
+
+
+```
+
+Here, we run the actual analysis:
+
+```{r}
+model_full = lmer(data = df_rawc_with_norms,
+                  sensorimotor_distance ~ same * ambiguity_type +
+                    distance_bert +
+                    (1 + same + ambiguity_type + distance_bert | word),
+                  control=lmerControl(optimizer="bobyqa"),
+                  REML = FALSE)
+
+model_just_fe = lmer(data = df_rawc_with_norms,
+                  sensorimotor_distance ~ same + ambiguity_type +
+                    distance_bert +
+                    (1 + same + ambiguity_type + distance_bert | word),
+                  control=lmerControl(optimizer="bobyqa"),
+                  REML = FALSE)
+
+model_no_same = lmer(data = df_rawc_with_norms,
+                  sensorimotor_distance ~ ambiguity_type +
+                    distance_bert + 
+                    (1 + same + ambiguity_type + distance_bert | word),
+                  control=lmerControl(optimizer="bobyqa"),
+                  REML = FALSE)
+
+summary(model_full)
+
+anova(model_full, model_just_fe)
+anova(model_just_fe, model_no_same)
+```
+
+## How correlated is sensorimotor distance with BERT Distance?
+
+It's correlated, and does improve model fit. It also seems to be more correlated with perceptual distance than action distance.
+
+```{r}
+df_rawc_with_norms %>%
+  ggplot(aes(x = sensorimotor_distance,
+             y = distance_bert,
+             color = same)) +
+  geom_smooth( method = "lm") +
+  geom_point(alpha = .5) +
+  labs(x = "Sensorimotor Distance",
+       y = "BERT Cosine Distance") +
+  theme_minimal()
+
+
+model_no_distance = lmer(data = df_rawc_with_norms,
+                  sensorimotor_distance ~ same * ambiguity_type +
+                    (1 + same + ambiguity_type + distance_bert | word),
+                   control=lmerControl(optimizer="bobyqa"),
+                  REML = FALSE)
+
+anova(model_full, model_no_distance)
+
+
+## Correlation
+cor.test(df_rawc_with_norms$distance_bert,
+         df_rawc_with_norms$sensorimotor_distance)
+cor.test(df_rawc_with_norms$distance_bert,
+         df_rawc_with_norms$perceptual_distance)
+cor.test(df_rawc_with_norms$distance_bert,
+         df_rawc_with_norms$action_distance)
+```
+
+
+## Predicting relatedness
+
+### Does sensorimotor distance predict relatedness above BERT distance?
+
+First, we find that sensorimotor distance predicts relatedness above and beyond BERT distance. That is, the difference in sensorimotor features between two contexts of use is predictive of people's relatedness judgments, beyond the distance as measured by distributional similarity.
+
+```{r}
+model_both_distances  = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ 
+                  distance_bert + sensorimotor_distance +
+                  (1| word),
+                REML = FALSE)
+
+model_no_sm  = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ distance_bert + 
+                  (1| word),
+                REML = FALSE)
+
+
+model_just_sm  = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ sensorimotor_distance + 
+                  (1| word),
+                REML = FALSE)
+
+summary(model_both_distances)
+anova(model_both_distances, model_no_sm)
+anova(model_both_distances, model_just_sm)
+```
+
+
+
+### Does sensorimotor distance predict relatedness above sense boundary?
+
+We also find that sensorimotor distance is *also* predictive above sense boundary and ambiguity type.
+
+```{r}
+model_full  = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ 
+                  same * ambiguity_type +
+                  distance_bert + sensorimotor_distance +
+                  (1| word),
+                REML = FALSE)
+
+model_reduced  = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ distance_bert +
+                  same * ambiguity_type +
+                  (1| word),
+                REML = FALSE)
+
+summary(model_full)
+anova(model_full, model_reduced)
+```
+
+### Do categorical factors continue to predict relatedness?
+
+Finally, we find that both `same * ambiguity_type` *and* `same sense` continue to explain variance in relatedness, above and beyond both measures of distance.
+
+```{r}
+model_no_interaction  = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ distance_bert +
+                  sensorimotor_distance + 
+                  same + ambiguity_type +
+                  (1| word),
+                REML = FALSE)
+
+anova(model_full, model_no_interaction)
+
+model_no_same  = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ distance_bert +
+                  sensorimotor_distance + 
+                  ambiguity_type +
+                  (1| word),
+                REML = FALSE)
+
+anova(model_no_interaction, model_no_same)
+
+
+model_just_same  = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ same +
+                  (1| word),
+                REML = FALSE)
+
+model_bert_same = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ same + distance_bert +
+                  (1| word),
+                REML = FALSE)
+
+model_sm_same = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ same + sensorimotor_distance +
+                  (1| word),
+                REML = FALSE)
+
+model_sm_same_at = lmer(data = df_rawc_with_norms,
+                mean_relatedness ~ same * ambiguity_type + sensorimotor_distance +
+                  (1| word),
+                REML = FALSE)
+
+
+```
+
+### Compare AIC
+
+```{r}
+aic = c(
+  summary(model_no_sm)$AIC[1],
+  summary(model_just_sm)$AIC[1],
+  summary(model_reduced)$AIC[1],
+  summary(model_bert_same)$AIC[1],
+  summary(model_sm_same)$AIC[1],
+  summary(model_sm_same_at)$AIC[1],
+  # summary(model_no_interaction)$AIC[1],
+  summary(model_full)$AIC[1],
+  summary(model_just_same)$AIC[1],
+  summary(model_both_distances)$AIC[1]
+)
+
+df_aic = tibble(
+  aic,
+  model = c(
+    'BERT',
+    'SM',
+    'BERT + S * AT',
+    'S + BERT',
+    'SM + S',
+     'SM + S * AT',
+    # 'BERT + SM + S + AT',
+    'SM + BERT + S * AT',
+    'S',
+    'SM + BERT'
+  )
+)
+
+df_aic = df_aic %>%
+  mutate(aic_rescaled = aic - min(aic)) %>%
+  mutate(lik = exp(-.5*aic_rescaled))  %>%
+  mutate(p = lik/sum(df_aic$lik))
+
+df_aic %>%
+  ggplot(aes(x = reorder(model, aic),
+             y = aic_rescaled,
+             fill = model)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  labs(x = "Model",
+       y = "AIC (Rescaled)") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  coord_flip() +
+  scale_fill_viridis_d() +
+  theme(text = element_text(size = 20)) +
+  guides(fill=FALSE)
+
+ggsave("../../Figures/acl2022/aic.pdf", dpi = 300)
+
+```
+
+
+# Baseline with LS Norms
+
+```{r}
+df_with_baseline = read_csv("../../data/processed/sentence_pairs_with_baseline.csv") %>%
+  select(-X1) %>%
+  drop_na(sensorimotor_distance) %>%
+  drop_na(baseline_distance)
+
+nrow(df_with_baseline)
+```
+
+
+## Does sensorimotor distance predict relatedness above the baseline?
+
+We also ask whether whether our measure of contextualized sensorimotor distance predicts relatedness above and beyond a baseline that simply considers the decontextualized Lancaster Sensorimotor Norms for the dismabiguating words in a sentence. (We find that it does.)
+
+```{r}
+
+model_bow_sm  = lmer(data = df_with_baseline,
+                mean_relatedness ~ baseline_distance + sensorimotor_distance +
+                  (1| word),
+                REML = FALSE)
+
+model_just_bow  = lmer(data = df_with_baseline,
+                mean_relatedness ~ baseline_distance + 
+                  (1| word),
+                REML = FALSE)
+
+model_just_sm  = lmer(data = df_with_baseline,
+                mean_relatedness ~ sensorimotor_distance + 
+                  (1| word),
+                REML = FALSE)
+
+summary(model_bow_sm)
+anova(model_bow_sm, model_just_bow)
+anova(model_bow_sm, model_just_sm)
+
+
+```
+
