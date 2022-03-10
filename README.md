@@ -1,2 +1,5 @@
-# cs_norms
+# Contextualized Sensorimotor Norms
+
+
+
 A dataset of contextualized sensorimotor norms.
