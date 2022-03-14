@@ -2,7 +2,9 @@
 
 GitHub repository for the Contextualized Sensorimotor Norms (CS Norms) database, as described in:
 
-> Trott, S., Bergen, B. (2022). Contextualized Sensorimotor Norms: multi-dimensional measures of sensorimotor strength for ambiguous English words, in context
+> Trott, S., Bergen, B. (2022). Contextualized Sensorimotor Norms: multi-dimensional measures of sensorimotor strength for ambiguous English words, in context.
+
+The paper can be found [here](https://arxiv.org/abs/2203.05648).
 
 ## About the data
 
