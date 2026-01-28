@@ -1,16 +1,18 @@
 ---
 title: "Analysis of contextualized sensorimotor norms"
-author: "Anonymous"
-date: "September 27, 2021"
+author: "Sean Trott"
+date: "January 19, 2026"
 output:
   html_document:
+    keep_md: yes
     toc: yes
     toc_float: yes
-    # code_folding: hide
-  pdf_document: default
-  word_document:
-    toc: yes
 ---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(dpi = 300, fig.format = "png")
+```
+
 
 ```{r include=FALSE}
 library(tidyverse)
@@ -18,7 +20,7 @@ library(lme4)
 library(ggridges)
 library(broom.mixed)
 library(lmerTest)
-library(corrplot)
+library(ggcorrplot)
 ```
 
 # Introduction
@@ -46,7 +48,7 @@ nrow(df_contextualized_meanings)
 
 ## Visualizing distributions
 
-```{r}
+```{r different_dimensions}
 df_contextualized_meanings_long = df_contextualized_meanings %>%
   pivot_longer(cols = c(Vision.M, Hearing.M, Olfaction.M,
                         Taste.M, Interoception.M, Touch.M,
@@ -68,14 +70,13 @@ df_contextualized_meanings_long %>%
   theme_bw() +
   theme(text = element_text(size=20))
 
-ggsave("../../Figures/acl2022/distributions.pdf", dpi = 300)
 
 ```
 
 
 ## Correlations across dimensions
 
-```{r}
+```{r corr_matrix}
 columns = df_contextualized_meanings %>%
   mutate(Vision = Vision.M,
          Hearing = Hearing.M, 
@@ -94,27 +95,27 @@ columns = df_contextualized_meanings %>%
          Hand_arm, Foot_leg)
 cors = cor(columns)
 
-cors[lower.tri(cors, diag=TRUE)] <- 0
+# cors[lower.tri(cors, diag=TRUE)] <- 0
 
-pdf(file="../../Figures/acl2022/corr.pdf")
 
-corrplot(cors, 
-         type = "upper",
-         method = "circle",
-         # method = "ellipse",
-         tl.col = "black",
-         tl.cex = 1.2)
+# Plot the correlation matrix
+ggcorrplot(cors, 
+           hc.order = FALSE,
+           # method = "square",
+           type = "upper") +
+  theme(
+    axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10)
+  )
 
-dev.off()
 
-# pdf("../../Figures/acl2022/corr.pdf")
 
 ```
 
 ## Visualizing specific words
 
 
-```{r}
+```{r specific_word_market}
 df_contextualized_meanings_long %>%
   group_by(word, Dimension) %>%
   mutate(Strength_scaled = scale(Strength)) %>%
@@ -128,10 +129,11 @@ df_contextualized_meanings_long %>%
   labs(x = "Dimension",
        y = "Sensorimotor Strength (z-scored)") +
   facet_wrap(~sentence) +
+  scale_fill_manual(values = viridisLite::viridis(11, option = "mako", 
+                                                   begin = 0.8, end = 0.15)) + 
   theme(text = element_text(size=16)) +
   guides(fill=FALSE)
 
-ggsave("../../Figures/acl2022/market_raw_z.pdf", dpi = 300)
 ```
 
 
@@ -168,7 +170,7 @@ Merge the dominance and sensorimotor norms data.
 
 ```{r}
 df_dom_plus_sm = df_contextualized_meanings %>%
-  inner_join(df_dominance_individual, on = c(word, context))
+  inner_join(df_dominance_individual)
 nrow(df_dom_plus_sm)
 ```
 
@@ -183,7 +185,7 @@ df_lancaster = df_lancaster %>%
   select(-Foot_leg.SD, -Torso.SD, -Head.SD, -Hand_arm.SD)
 
 df_dom_plus_sm = df_dom_plus_sm %>%
-  inner_join(df_lancaster, on = word)
+  inner_join(df_lancaster)
 nrow(df_dom_plus_sm)
 ```
 
@@ -192,7 +194,7 @@ nrow(df_dom_plus_sm)
 
 Based on Lynott et al (2019), we **contextualized sensorimotor strength** as the *maximum* strength across all the dimensions.
 
-```{r}
+```{r sm_strength_overall}
 df_dom_plus_sm = df_dom_plus_sm %>%
   rowwise() %>%
   mutate(max_strength = max(
@@ -243,6 +245,9 @@ df_dom_plus_sm %>%
   labs(y = "Maximum Contextualized Strength",
        x = "Maximum Strength (Lancaster)") +
   theme_bw()
+
+cor.test(df_dom_plus_sm$Max_strength.sensorimotor,
+         df_dom_plus_sm$max_strength)
 ```
 
 
@@ -252,7 +257,7 @@ The answer is **yes**: contexts with a higher *maximum* sensorimotor strength al
 
 Notably, this is true above and beyond the *decontextualized* ratings of sensorimotor strength for a given word.
 
-```{r}
+```{r strength_dominance}
 df_dom_plus_sm %>%
   ggplot(aes(x = max_strength,
              y = dominance)) +
@@ -260,7 +265,10 @@ df_dom_plus_sm %>%
   geom_smooth(method = "lm") +
   labs(x = "Maximum Contextualized Strength",
        y = "Dominance") +
-  theme_bw()
+  theme_minimal() +
+  theme(text = element_text(size=16))
+
+  
 
 model_full = lmer(data = df_dom_plus_sm,
                 dominance ~ 
@@ -290,11 +298,117 @@ df_dom_plus_sm %>%
 
 ```
 
+### Which dimension best predicts dominance?
+
+Here, we ask whether specific dimensions are particularly correlated with sense dominance.
+
+```{r specific_dimensions_dominance}
+features <- c("Vision.M", "Hearing.M", "Olfaction.M", "Touch.M", "Taste.M", 
+              "Interoception.M", "Head.M", "Mouth_throat.M", "Torso.M", 
+              "Hand_arm.M", "Foot_leg.M")
+
+# Models with each feature + baseline covariate
+r2_results <- map_dfr(features, function(feat) {
+  
+  formula <- as.formula(paste0("dominance ~ Max_strength.sensorimotor + ", feat))
+  model <- lm(formula, data = df_dom_plus_sm)
+  
+  tibble(
+    feature = feat,
+    R2 = summary(model)$r.squared,
+    beta = coef(model)[3],  # coefficient for the feature (3rd term now)
+    p_value = summary(model)$coefficients[3, 4]
+  )
+})
+
+# Baseline model (just Max_strength.sensorimotor)
+baseline_model <- lm(dominance ~ Max_strength.sensorimotor, data = df_dom_plus_sm)
+
+baseline_row <- tibble(
+  feature = "Baseline",
+  R2 = summary(baseline_model)$r.squared,
+  beta = NA,
+  p_value = NA
+)
+
+# Combine
+r2_results_with_baseline <- bind_rows(baseline_row, r2_results)
+
+# Plot
+r2_results_with_baseline %>%
+  mutate(feature = str_remove(feature, "\\.M$"),
+         feature = str_replace(feature, "_", "/"),
+         sig = ifelse(p_value < .05, "*", ""),
+         is_baseline = feature == "Baseline",
+         feature = fct_reorder(feature, R2)) %>%
+  ggplot(aes(x = R2, y = feature, fill = is_baseline)) +
+  geom_col() +
+  geom_text(aes(label = sig), hjust = -0.5, size = 6, na.rm = TRUE) +
+  scale_fill_manual(values = c("grey40", "steelblue"), guide = "none") +
+  labs(x = "R²", y = NULL, title = "Predicting Sense Dominance") +
+  theme_minimal() +
+  theme(text = element_text(size = 16))
+
+
+cor.test(df_dom_plus_sm$Touch.M,
+         df_dom_plus_sm$dominance)
+
+cor.test(df_dom_plus_sm$Vision.M,
+         df_dom_plus_sm$dominance)
+```
+
+
+It looks like vision and touch are especially strong predictors. Which items drive this, e.g., for touch? 
+
+```{r touch_dominance}
+by_sense <- df_dom_plus_sm %>%
+  mutate(sense = str_extract(context, "M[12]")) %>%
+  group_by(word, sense) %>%
+  summarize(
+    mean_touch = mean(Touch.M),
+    mean_vision = mean(Vision.M),
+    mean_dom = mean(dominance),
+    .groups = "drop"
+  )
+
+# Now 2 rows per word—compute within-word difference
+sense_diffs <- by_sense %>%
+  pivot_wider(names_from = sense, 
+              values_from = c(mean_touch, mean_vision, mean_dom)) %>%
+  mutate(
+    touch_diff = mean_touch_M1 - mean_touch_M2,
+    vision_diff = mean_vision_M1 - mean_vision_M2,
+    dom_diff = mean_dom_M1 - mean_dom_M2
+  )
+
+sense_diffs %>%
+  mutate(abs_touch_diff = abs(touch_diff)) %>%
+  arrange(desc(abs_touch_diff)) %>%
+  select(word, abs_touch_diff, dom_diff) %>%
+  head(5)
+
+sense_diffs %>%
+  mutate(abs_vision_diff = abs(vision_diff)) %>%
+  arrange(desc(abs_vision_diff)) %>%
+  select(word, abs_vision_diff, dom_diff) %>%
+  head(5)
+
+# Does the sense with higher Touch or Vision tend to be more dominant?
+cor.test(sense_diffs$touch_diff, sense_diffs$dom_diff)
+cor.test(sense_diffs$vision_diff, sense_diffs$dom_diff)
+
+```
+
+
+
+
+
+
 ## Comparing dimensions to Lancaster
 
 Now, we compare each dimension to the LS Norms.
 
-```{r}
+```{r ls_deviation_market}
 df_diffs = df_dom_plus_sm %>%
   mutate(vision_diff = (Vision.M - Visual.mean),
          auditory_diff = (Hearing.M - Auditory.mean),
@@ -353,18 +467,19 @@ df_diffs %>%
   coord_flip() +
   labs(x = "Dimension",
        y = "Deviation from Lancaster Norms") +
+  scale_fill_manual(values = viridisLite::viridis(11, option = "mako", 
+                                                   begin = 0.8, end = 0.15)) + 
   facet_wrap(~sentence) +
   theme(text = element_text(size=16)) +
   guides(fill = FALSE)
 
-ggsave("../../Figures/acl2022/market.pdf", dpi = 300)
 
 
 ```
 
 We also look at this across *all* words:
 
-```{r}
+```{r ls_deviation_overall}
 df_diffs %>%
   ggplot(aes(x = reorder(Dimension, Diff),
              y = Diff)) +
@@ -386,7 +501,9 @@ This question can in turn be decomposed into two questions:
 
 First, are more dominant senses **closer** to the LS Norms overall? We might expect this to be the case if the LS Norms reflect the dominant sense; that is, when people rate the sensorimotor properties of a decontextualized word, they might be more likely to index properties associated with the most dominant contexts or meanings of that word.
 
-```{r}
+And the answer is **yes**: more dominant senses are indeed more *similar* (less distant) from the Lancaster norm in terms of their sensorimotor profile.
+
+```{r dominance_ls_deviation}
 model_with_dominance = lmer(data = df_dom_plus_sm,
                   distance_to_lancaster ~ dominance + (1 | word),
                   REML = FALSE)
@@ -414,6 +531,8 @@ And second: does dominance predict the **direction** of difference?
 
 The earlier analysis of dominance suggests that more dominant senses are more concrete than less dominant senses. Thus, we might expect that more dominant senses are also more concrete on average than the decontextualized norms. 
 
+We find that this is true: that is, more dominant senses are *more concrete* on average than the LS norm.
+
 ```{r}
 df_diffs_avg = df_diffs %>%
   group_by(word, sentence, context) %>%
@@ -436,15 +555,6 @@ anova(model_with_dominance, model_no_dominance)
 
 cor.test(df_diffs_avg$dominance, df_diffs_avg$mean_diff)
 
-df_diffs_avg %>%
-  ggplot(aes(x = dominance,
-             y = mean_diff,
-             color = max_strength)) +
-  geom_point(alpha = .5) +
-  geom_smooth(method = "lm") +
-  labs(x = "Dominance",
-       y = "Average Deviation from LS Norms") +
-  theme_bw()
 ```
 
 
@@ -459,298 +569,571 @@ Here, we load a version of the dataset that also contains a *baseline* measure: 
 
 ```{r}
 df_rawc_with_norms = read_csv("../../data/processed/sentence_pairs_with_sensorimotor_distance.csv") %>%
-  select(-X1) %>%
-  drop_na(sensorimotor_distance)
+  drop_na(sensorimotor_distance) %>%
+  select(sensorimotor_distance, action_distance, perceptual_distance,
+         word, same, ambiguity_type, sentence1, sentence2, mean_relatedness, Class)
 
 nrow(df_rawc_with_norms)
+
 ```
 
-## How well does sensorimotor distance track same/different sense?
 
+## Load English RAW-C data
 
 ```{r}
+df_bert = read_csv("../../data/processed/models_english/rawc-distances_model-bert-base-uncased.csv") %>%
+  mutate(Model = "BERT-base-uncased",
+         Multilingual = "Monolingual")
+
+df_bert_cased = read_csv("../../data/processed/models_english/rawc-distances_model-bert-base-cased.csv") %>%
+  mutate(Model = "BERT-base-cased",
+         Multilingual = "Monolingual")
+
+
+df_xlm = read_csv("../../data/processed/models_english/rawc-distances_model-xlm-roberta-base.csv") %>%
+  mutate(Model = "XLM-RoBERTa",
+         Multilingual = "Multilingual")
+
+
+df_ab1 = read_csv("../../data/processed/models_english/rawc-distances_model-albert-base-v1.csv") %>%
+  mutate(Model = "ALBERT-base-v1",
+         Multilingual = "Monolingual")
+
+df_ab2 = read_csv("../../data/processed/models_english/rawc-distances_model-albert-base-v2.csv") %>%
+  mutate(Model = "ALBERT-base-v2",
+         Multilingual = "Monolingual")
+
+df_al = read_csv("../../data/processed/models_english/rawc-distances_model-albert-large-v2.csv") %>%
+  mutate(Model = "ALBERT-large-v2",
+         Multilingual = "Monolingual")
+
+df_axl = read_csv("../../data/processed/models_english/rawc-distances_model-albert-xlarge-v2.csv") %>%
+  mutate(Model = "ALBERT-xlarge-v2",
+         Multilingual = "Monolingual")
+
+df_axxl = read_csv("../../data/processed/models_english/rawc-distances_model-albert-xxlarge-v2.csv")  %>%
+  mutate(Model = "ALBERT-xxlarge-v2",
+         Multilingual = "Monolingual")
+
+df_rb = read_csv("../../data/processed/models_english/rawc-distances_model-roberta-base.csv") %>%
+  mutate(Model = "RoBERTa-base",
+         Multilingual = "Monolingual")
+
+df_rl = read_csv("../../data/processed/models_english/rawc-distances_model-roberta-large.csv") %>%
+  mutate(Model = "RoBERTa-large",
+         Multilingual = "Monolingual")
+
+df_db = read_csv("../../data/processed/models_english/rawc-distances_model-distilbert-base-uncased.csv") %>%
+  mutate(Model = "DistilBERT",
+         Multilingual = "Monolingual")
+
+
+df_mb = read_csv("../../data/processed/models_english/rawc-distances_model-bert-base-multilingual-cased.csv") %>%
+  mutate(Model = "Multilingual BERT",
+         Multilingual = "Multilingual")
+
+
+
+df_all = df_bert %>%
+  bind_rows(df_bert_cased) %>%
+  bind_rows(df_xlm) %>%
+  bind_rows(df_ab1) %>%
+  bind_rows(df_ab2) %>%
+  bind_rows(df_al) %>%
+  bind_rows(df_axl) %>%
+  bind_rows(df_axxl) %>%
+  bind_rows(df_rb) %>%
+  bind_rows(df_rl) %>%
+  bind_rows(df_db) %>%
+  bind_rows(df_mb)
+
+
+df_merged = df_rawc_with_norms %>%
+  inner_join(df_all)
+```
+
+
+## Predicting same/different sense
+
+### Sensorimotor distance and sense boundaries
+
+
+```{r sm_sense}
+
+df_rawc_with_norms = df_rawc_with_norms %>%
+  mutate(Same = case_when(
+    same == TRUE ~ "Same Sense",
+    same == FALSE ~ "Different Sense"
+  ))
+
+
+
 df_rawc_with_norms %>%
   ggplot(aes(x = sensorimotor_distance,
              y = ambiguity_type,
-             fill = same)) +
+             fill = Same)) +
   geom_density_ridges2(aes(height = ..density..), 
-                       color=gray(0.25), 
+                       color = NA,
                        alpha = 0.5, 
                        scale=0.85, 
-                       size=.9, 
                        stat="density") +
   labs(x = "Sensorimotor Distance",
-       y = "Ambiguity Type",
-       fill = "Same Sense") +
-  # scale_x_continuous(limits = c(0, 1)) +
-  scale_fill_viridis_d() +
+       y = NULL,
+       fill = NULL) +
+  scale_fill_manual(
+    values = c("Same Sense" = viridisLite::viridis(2, option = "mako", begin = 0.8, end = 0.15)[1],
+               "Different Sense" = viridisLite::viridis(2, option = "mako", begin = 0.8, end = 0.15)[2])
+  ) + 
   theme_minimal() +
-  theme(text = element_text(size=20))
-
-ggsave("../../Figures/acl2022/same_diff.pdf", dpi = 300)
-
-df_rawc_with_norms %>%
-  ggplot(aes(x = perceptual_distance,
-             y = ambiguity_type,
-             fill = same)) +
-  geom_density_ridges2(aes(height = ..density..), 
-                       color=gray(0.25), 
-                       alpha = 0.5, 
-                       scale=0.85, 
-                       size=.9, 
-                       stat="density") +
-  labs(x = "Perceptual Distance",
-       y = "Ambiguity type") +
-  scale_x_continuous(limits = c(0, 1)) +
-  scale_fill_viridis_d() +
-  theme_minimal()
+  theme(text = element_text(size = 20))
 
 
-df_rawc_with_norms %>%
-  ggplot(aes(x = action_distance,
-             y = ambiguity_type,
-             fill = same)) +
-  geom_density_ridges2(aes(height = ..density..), 
-                       color=gray(0.25), 
-                       alpha = 0.5, 
-                       scale=0.85, 
-                       size=.9, 
-                       stat="density") +
-  labs(x = "Action Distance",
-       y = "Ambiguity type") +
-  scale_x_continuous(limits = c(0, 1)) +
-  scale_fill_viridis_d() +
-  theme_minimal()
 
-
-```
-
-Here, we run the actual analysis:
-
-```{r}
 model_full = lmer(data = df_rawc_with_norms,
-                  sensorimotor_distance ~ same * ambiguity_type +
-                    distance_bert +
-                    (1 + same + ambiguity_type + distance_bert | word),
+                  sensorimotor_distance ~ same +
+                    (1 + same | word),
                   control=lmerControl(optimizer="bobyqa"),
                   REML = FALSE)
 
-model_just_fe = lmer(data = df_rawc_with_norms,
-                  sensorimotor_distance ~ same + ambiguity_type +
-                    distance_bert +
-                    (1 + same + ambiguity_type + distance_bert | word),
+model_reduced = lmer(data = df_rawc_with_norms,
+                  sensorimotor_distance ~ # same +
+                    (1 + same | word),
                   control=lmerControl(optimizer="bobyqa"),
                   REML = FALSE)
-
-model_no_same = lmer(data = df_rawc_with_norms,
-                  sensorimotor_distance ~ ambiguity_type +
-                    distance_bert + 
-                    (1 + same + ambiguity_type + distance_bert | word),
-                  control=lmerControl(optimizer="bobyqa"),
-                  REML = FALSE)
-
-summary(model_full)
-
-anova(model_full, model_just_fe)
-anova(model_just_fe, model_no_same)
-```
-
-## How correlated is sensorimotor distance with BERT Distance?
-
-It's correlated, and does improve model fit. It also seems to be more correlated with perceptual distance than action distance.
-
-```{r}
-df_rawc_with_norms %>%
-  ggplot(aes(x = sensorimotor_distance,
-             y = distance_bert,
-             color = same)) +
-  geom_smooth( method = "lm") +
-  geom_point(alpha = .5) +
-  labs(x = "Sensorimotor Distance",
-       y = "BERT Cosine Distance") +
-  theme_minimal()
-
-
-model_no_distance = lmer(data = df_rawc_with_norms,
-                  sensorimotor_distance ~ same * ambiguity_type +
-                    (1 + same + ambiguity_type + distance_bert | word),
-                   control=lmerControl(optimizer="bobyqa"),
-                  REML = FALSE)
-
-anova(model_full, model_no_distance)
-
-
-## Correlation
-cor.test(df_rawc_with_norms$distance_bert,
-         df_rawc_with_norms$sensorimotor_distance)
-cor.test(df_rawc_with_norms$distance_bert,
-         df_rawc_with_norms$perceptual_distance)
-cor.test(df_rawc_with_norms$distance_bert,
-         df_rawc_with_norms$action_distance)
-```
-
-
-## Predicting relatedness
-
-### Does sensorimotor distance predict relatedness above BERT distance?
-
-First, we find that sensorimotor distance predicts relatedness above and beyond BERT distance. That is, the difference in sensorimotor features between two contexts of use is predictive of people's relatedness judgments, beyond the distance as measured by distributional similarity.
-
-```{r}
-model_both_distances  = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ 
-                  distance_bert + sensorimotor_distance +
-                  (1| word),
-                REML = FALSE)
-
-model_no_sm  = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ distance_bert + 
-                  (1| word),
-                REML = FALSE)
-
-
-model_just_sm  = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ sensorimotor_distance + 
-                  (1| word),
-                REML = FALSE)
-
-summary(model_both_distances)
-anova(model_both_distances, model_no_sm)
-anova(model_both_distances, model_just_sm)
-```
-
-
-
-### Does sensorimotor distance predict relatedness above sense boundary?
-
-We also find that sensorimotor distance is *also* predictive above sense boundary and ambiguity type.
-
-```{r}
-model_full  = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ 
-                  same * ambiguity_type +
-                  distance_bert + sensorimotor_distance +
-                  (1| word),
-                REML = FALSE)
-
-model_reduced  = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ distance_bert +
-                  same * ambiguity_type +
-                  (1| word),
-                REML = FALSE)
 
 summary(model_full)
 anova(model_full, model_reduced)
 ```
 
-### Do categorical factors continue to predict relatedness?
 
-Finally, we find that both `same * ambiguity_type` *and* `same sense` continue to explain variance in relatedness, above and beyond both measures of distance.
+### Predicting sense boundaries
 
-```{r}
-model_no_interaction  = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ distance_bert +
-                  sensorimotor_distance + 
-                  same + ambiguity_type +
-                  (1| word),
-                REML = FALSE)
+Here, we run the actual analysis:
 
-anova(model_full, model_no_interaction)
-
-model_no_same  = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ distance_bert +
-                  sensorimotor_distance + 
-                  ambiguity_type +
-                  (1| word),
-                REML = FALSE)
-
-anova(model_no_interaction, model_no_same)
+```{r aic_sense_boundaries}
 
 
-model_just_same  = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ same +
-                  (1| word),
-                REML = FALSE)
-
-model_bert_same = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ same + distance_bert +
-                  (1| word),
-                REML = FALSE)
-
-model_sm_same = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ same + sensorimotor_distance +
-                  (1| word),
-                REML = FALSE)
-
-model_sm_same_at = lmer(data = df_rawc_with_norms,
-                mean_relatedness ~ same * ambiguity_type + sensorimotor_distance +
-                  (1| word),
-                REML = FALSE)
+model_sm_only <- glm(same ~ sensorimotor_distance, 
+                     data = df_rawc_with_norms, 
+                     family = binomial)
 
 
-```
+aic_sm_baseline <- AIC(model_sm_only)
 
-### Compare AIC
+print(paste("AIC:", round(aic_sm_baseline, 1)))
 
-```{r}
-aic = c(
-  summary(model_no_sm)$AIC[1],
-  summary(model_just_sm)$AIC[1],
-  summary(model_reduced)$AIC[1],
-  summary(model_bert_same)$AIC[1],
-  summary(model_sm_same)$AIC[1],
-  summary(model_sm_same_at)$AIC[1],
-  # summary(model_no_interaction)$AIC[1],
-  summary(model_full)$AIC[1],
-  summary(model_just_same)$AIC[1],
-  summary(model_both_distances)$AIC[1]
-)
 
-df_aic = tibble(
-  aic,
-  model = c(
-    'BERT',
-    'SM',
-    'BERT + S * AT',
-    'S + BERT',
-    'SM + S',
-     'SM + S * AT',
-    # 'BERT + SM + S + AT',
-    'SM + BERT + S * AT',
-    'S',
-    'SM + BERT'
+### Get aic
+aic_results <- df_merged %>%
+  group_by(n_params, Model, Layer) %>%
+  summarize(
+    # BERT only
+    aic_bert = {
+      model <- glm(Same_sense ~ Distance, family = binomial)
+      AIC(model)
+    },
+    # Combined
+    aic_combined = {
+      model <- glm(Same_sense ~ Distance + sensorimotor_distance, family = binomial)
+      AIC(model)
+    },
+    aic_sm = {
+      model <- glm(Same_sense ~ sensorimotor_distance, family = binomial)
+      AIC(model)
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(
+    # AIC Delta
+    aic_bert_vs_sm = aic_bert - aic_sm_baseline,
+    aic_combined_vs_sm = aic_sm_baseline - aic_combined,
+    aic_combined_vs_dist = aic_bert - aic_combined
   )
-)
 
-df_aic = df_aic %>%
-  mutate(aic_rescaled = aic - min(aic)) %>%
-  mutate(lik = exp(-.5*aic_rescaled))  %>%
-  mutate(p = lik/sum(df_aic$lik))
+# ============================================================
+# 3. Best layer per model
+# ============================================================
 
-df_aic %>%
-  ggplot(aes(x = reorder(model, aic),
-             y = aic_rescaled,
-             fill = model)) +
-  geom_bar(stat = "identity") +
-  theme_bw() +
-  labs(x = "Model",
-       y = "AIC (Rescaled)") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-  coord_flip() +
-  scale_fill_viridis_d() +
-  theme(text = element_text(size = 20)) +
-  guides(fill=FALSE)
+best_layers <- aic_results %>%
+  group_by(Model, n_params) %>%
+  slice_min(aic_bert, n = 1) %>%
+  select(Model, Layer, 
+         aic_bert_vs_sm, aic_combined_vs_sm, aic_combined_vs_dist,
+          aic_sm, aic_bert, aic_combined)
 
-ggsave("../../Figures/acl2022/aic.pdf", dpi = 300)
+
+best_layers = best_layers %>%
+  mutate(aic_bert_vs_sm2 = aic_bert - aic_sm_baseline)
+
+print(best_layers)
+
+## AIC difference from SM baseline
+
+best_layers %>%
+  select(Model, aic_bert_vs_sm, aic_combined_vs_sm) %>%
+  pivot_longer(cols = c(aic_bert_vs_sm, aic_combined_vs_sm),
+               names_to = "type", values_to = "aic_diff") %>%
+  mutate(type = ifelse(type == "aic_bert_vs_sm", 
+                       "Distributional only", 
+                       "Distributional + Sensorimotor"),
+         type = factor(type, levels = c("Distributional only", 
+                                        "Distributional + Sensorimotor")),
+         Model = fct_reorder(Model, aic_diff)) %>%
+  ggplot(aes(x = aic_diff, y = Model, fill = type)) +
+  geom_col(position = "dodge") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "ΔAIC vs. Sensorimotor baseline", 
+       y = NULL,
+       fill = NULL) +
+  scale_fill_manual(values = c("Distributional only" = "gray60", 
+                                "Distributional + Sensorimotor" = "steelblue")) +
+  theme_minimal() +
+  theme(text = element_text(size = 16),
+        legend.position = "bottom")
+
+best_layers %>%
+  ungroup() %>%
+  select(Model, aic_bert, aic_combined) %>%
+  mutate(across(starts_with("aic"), round)) %>%
+  kbl(col.names = c("Model", "Distributional", "Hybrid"),
+      format = "latex",
+      booktabs = TRUE,
+      caption = "AIC values for predicting sense boundaries using Distributional Distance alone or both Distributional Distance and Sensorimotor Distance (AIC for Sensorimotor Distance was 707)",
+      label = "aic") %>%
+  kable_styling(latex_options = "hold_position")
+
+
+aic_results %>%
+  mutate(dist_better_than_sm = aic_bert_vs_sm > 4,
+         hybrid_better_than_sm = aic_combined_vs_sm > 4,
+         hybrid_better_than_dist = aic_combined_vs_dist > 4) %>%
+  summarise(mean(dist_better_than_sm),
+            mean(hybrid_better_than_sm),
+            mean(hybrid_better_than_dist))
+
+best_layers %>%
+  ungroup() %>%
+  mutate(dist_better_than_sm = aic_bert_vs_sm < -4,
+         hybrid_better_than_sm = aic_combined_vs_sm > 4,
+         hybrid_better_than_dist = aic_combined_vs_dist > 4) %>%
+  summarise(mean(dist_better_than_sm),
+            mean(hybrid_better_than_sm),
+            mean(hybrid_better_than_dist))
+
+
+
+
+### Visualize raw AIC
+aic_summary_full <- best_layers %>%
+  select(Model, Layer, aic_sm, aic_bert, aic_combined) %>%
+  pivot_longer(cols = c(aic_sm, aic_bert, aic_combined),
+               names_to = "type", values_to = "aic") %>%
+  mutate(type = case_when(
+    type == "aic_sm" ~ "Sensorimotor",
+    type == "aic_bert" ~ "Distributional",
+    type == "aic_combined" ~ "Hybrid"
+  ),
+  type = factor(type, levels = c("Sensorimotor", "Distributional", "Hybrid")))
+
+# Get sensorimotor baseline (should be the same for all models)
+aic_sm_baseline <- aic_summary_full %>%
+  filter(type == "Sensorimotor") %>%
+  pull(aic) %>%
+  unique()
+
+# Filter to just distributional and hybrid
+aic_summary_no_sm <- aic_summary_full %>%
+  filter(type != "Sensorimotor")
+
+aic_summary_se_no_sm <- aic_summary_no_sm %>%
+  group_by(type) %>%
+  summarize(
+    mean_aic = mean(aic),
+    se_aic = sd(aic) / sqrt(n())
+  )
+
+ggplot() +
+  # Sensorimotor baseline as dashed line
+  geom_hline(yintercept = aic_sm_baseline, 
+             linetype = "dashed", color = "coral", linewidth = 1) +
+  # Raw points for each model/layer
+  geom_jitter(data = aic_summary_no_sm, 
+              aes(x = type, y = aic, color = type),
+              alpha = 0.3, width = 0.1, size = 2) +
+  # Mean + SE
+  geom_point(data = aic_summary_se_no_sm, 
+             aes(x = type, y = mean_aic, color = type),
+             size = 5) +
+  geom_errorbar(data = aic_summary_se_no_sm, 
+                aes(x = type, ymin = mean_aic - se_aic, 
+                    ymax = mean_aic + se_aic, color = type), 
+                width = 0.15, linewidth = 1.2) +
+  annotate("text", x = 1.5, y = aic_sm_baseline + 30, 
+           label = "Sensorimotor", color = "coral", size = 5)+
+  labs(x = NULL, 
+       y = "AIC (lower is better)",
+       title = "Predicting Sense Boundary") +
+  scale_color_manual(values = c("Distributional" = "gray60", 
+                                "Hybrid" = "steelblue")) +
+  theme_minimal() +
+  theme(text = element_text(size = 16),
+        legend.position = "none")
 
 ```
+
+
+## Predicting relatedness
+
+### Comparing to each distributional relatedness measure
+
+```{r relatedness_comparison}
+
+df_rawc_with_norms %>%
+  ggplot(aes(x = sensorimotor_distance,
+            y = mean_relatedness,
+            color = Same)) +
+  geom_point(alpha = .5) +
+  scale_color_manual(
+    values = c("Same Sense" = viridisLite::viridis(2, option = "mako", 
+                                                   begin = 0.8, end = 0.15)[1],
+               "Different Sense" = viridisLite::viridis(2, option = "mako", 
+                                                        begin = 0.8, end = 0.15)[2])
+  ) +
+  theme_minimal() +
+  labs(x = "Sensorimotor Distance",
+       y = "Mean Relatedness",
+       color = "") +
+  theme(text = element_text(size = 15),
+      legend.position="bottom")
+  
+
+cor(df_rawc_with_norms$sensorimotor_distance,
+            df_rawc_with_norms$mean_relatedness)
+
+```
+
+
+### Comparing AIC
+
+```{r aic_relatedness}
+
+# ============================================================
+# 2. For each model/layer: compute R² and AIC, difference from SM baseline
+# ============================================================
+
+relatedness_results <- df_merged %>%
+  group_by(Model, Layer, n_params, Multilingual) %>%
+  summarize(
+    # Sensorimotor only
+    r2_sm = {
+      model <- lm(mean_relatedness ~ sensorimotor_distance)
+      summary(model)$r.squared
+    },
+    aic_sm = {
+      model <- lm(mean_relatedness ~ sensorimotor_distance)
+      AIC(model)
+    },
+    # BERT only
+    r2_bert = {
+      model <- lm(mean_relatedness ~ Distance)
+      summary(model)$r.squared
+    },
+    aic_bert = {
+      model <- lm(mean_relatedness ~ Distance)
+      AIC(model)
+    },
+    # Combined
+    r2_combined = {
+      model <- lm(mean_relatedness ~ Distance + sensorimotor_distance)
+      summary(model)$r.squared
+    },
+    aic_combined = {
+      model <- lm(mean_relatedness ~ Distance + sensorimotor_distance)
+      AIC(model)
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(
+    aic_bert_vs_sm = aic_bert - aic_sm,
+    aic_combined_vs_sm = aic_sm - aic_combined,
+    aic_combined_vs_dist = aic_bert - aic_combined
+  )
+
+# ============================================================
+# 3. Best layer per model
+# ============================================================
+
+best_layers <- relatedness_results %>%
+  group_by(Model, n_params, Multilingual) %>%
+  slice_max(r2_bert, n = 1) %>%
+  select(Model, Layer, n_params, Multilingual,
+         # r2_sm, r2_bert, r2_combined,
+         aic_bert_vs_sm, aic_sm, aic_bert, aic_combined,
+         aic_combined_vs_sm, aic_combined_vs_dist)
+
+print(best_layers)
+
+best_layers %>%
+  ungroup() %>%
+  select(Model, aic_bert, aic_combined) %>%
+  mutate(across(starts_with("aic"), round)) %>%
+  kbl(col.names = c("Model", "Distributional", "Hybrid"),
+      format = "latex",
+      booktabs = TRUE,
+      caption = "AIC values for predicting relatedness judgments using Distributional Distance alone or both Distributional Distance and Sensorimotor Distance (AIC for Sensorimotor Distance was 2134.78.)",
+      label = "aic") %>%
+  kable_styling(latex_options = "hold_position")
+
+
+
+best_layers %>%
+  select(Model, aic_bert_vs_sm, aic_combined_vs_sm) %>%
+  pivot_longer(cols = c(aic_bert_vs_sm, aic_combined_vs_sm),
+               names_to = "type", values_to = "aic_diff") %>%
+  mutate(type = ifelse(type == "aic_bert_vs_sm", "Distributional only", "Distributional + Sensorimotor"),
+         type = factor(type, levels = c("Distributional only", "Distributional + Sensorimotor")),
+         Model = fct_reorder(Model, aic_diff)) %>%
+  ggplot(aes(x = aic_diff, y = Model, fill = type)) +
+  geom_col(position = "dodge") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 4, linetype = "dotted", color = "gray50") +
+  geom_vline(xintercept = -4, linetype = "dotted", color = "gray50") +
+  labs(x = "ΔAIC vs. Sensorimotor baseline", 
+       y = NULL,
+       fill = NULL) +
+  scale_fill_manual(values = c("Distributional only" = "gray60", 
+                                "Distributional + Sensorimotor" = "steelblue")) +
+  theme_minimal() +
+  theme(text = element_text(size = 16),
+        legend.position = "bottom")
+
+
+# ============================================================
+# 7. Summary
+# ============================================================
+
+best_layers %>%
+  ungroup() %>%
+  mutate(dist_better_than_sm = aic_bert_vs_sm < -4,
+         hybrid_better_than_sm = aic_combined_vs_sm > 4,
+         hybrid_better_than_dist = aic_combined_vs_dist > 4) %>%
+  summarise(mean(dist_better_than_sm),
+            mean(hybrid_better_than_sm),
+            mean(hybrid_better_than_dist))
+
+
+
+### Visualize raw AIC
+aic_summary_full <- best_layers %>%
+  select(Model, Layer, aic_sm, aic_bert, aic_combined) %>%
+  pivot_longer(cols = c(aic_sm, aic_bert, aic_combined),
+               names_to = "type", values_to = "aic") %>%
+  mutate(type = case_when(
+    type == "aic_sm" ~ "Sensorimotor",
+    type == "aic_bert" ~ "Distributional",
+    type == "aic_combined" ~ "Hybrid"
+  ),
+  type = factor(type, levels = c("Sensorimotor", "Distributional", "Hybrid")))
+
+# Get sensorimotor baseline (should be the same for all models)
+aic_sm_baseline <- aic_summary_full %>%
+  filter(type == "Sensorimotor") %>%
+  pull(aic) %>%
+  unique()
+
+# Filter to just distributional and hybrid
+aic_summary_no_sm <- aic_summary_full %>%
+  filter(type != "Sensorimotor")
+
+aic_summary_se_no_sm <- aic_summary_no_sm %>%
+  group_by(type) %>%
+  summarize(
+    mean_aic = mean(aic),
+    se_aic = sd(aic) / sqrt(n())
+  )
+
+ggplot() +
+  # Sensorimotor baseline as dashed line
+  geom_hline(yintercept = aic_sm_baseline, 
+             linetype = "dashed", color = "coral", linewidth = 1) +
+  # Raw points for each model/layer
+  geom_jitter(data = aic_summary_no_sm, 
+              aes(x = type, y = aic, color = type),
+              alpha = 0.3, width = 0.1, size = 2) +
+  # Mean + SE
+  geom_point(data = aic_summary_se_no_sm, 
+             aes(x = type, y = mean_aic, color = type),
+             size = 5) +
+  geom_errorbar(data = aic_summary_se_no_sm, 
+                aes(x = type, ymin = mean_aic - se_aic, 
+                    ymax = mean_aic + se_aic, color = type), 
+                width = 0.15, linewidth = 1.2) +
+  annotate("text", x = 1.5, y = aic_sm_baseline + 30, 
+           label = "Sensorimotor", color = "coral", size = 5)+
+  labs(x = NULL, 
+       y = "AIC (lower is better)",
+       title = "Predicting Relatedness") +
+  scale_color_manual(values = c("Distributional" = "gray60", 
+                                "Hybrid" = "steelblue")) +
+  theme_minimal() +
+  theme(text = element_text(size = 16),
+        legend.position = "none")
+
+```
+
+
+
+
+## Correlation between sensorimotor and distributional distance
+
+```{r corr_dist_sm}
+# Get best layer
+df_by_layer = df_merged %>%
+  group_by(Model, Multilingual, Layer, n_params) %>%
+  summarise(r = cor(mean_relatedness, Distance, method = "pearson"),
+            r2 = r ** 2,
+            rho = cor(mean_relatedness, Distance, method = "spearman"),
+            count = n())
+df_best_layer <- df_by_layer %>%
+  group_by(Model) %>%
+  slice_max(r2, n = 1) %>%
+  select(Model, Layer, r2)
+
+# Filter for only best layers
+df_best <- df_merged %>%
+  semi_join(df_best_layer, by = c("Model", "Layer"))
+
+# Pivot wider
+df_wide <- df_best %>%
+  mutate(`Sensorimotor Distance` = sensorimotor_distance) %>%
+  select(word, sentence1, sentence2, `Sensorimotor Distance`, Model, Distance) %>%
+  pivot_wider(names_from = Model, values_from = Distance)
+
+# Compute correlation matrix
+cor_matrix <- df_wide %>%
+  select(`Sensorimotor Distance`, where(is.numeric)) %>%
+  cor(use = "pairwise.complete.obs")
+
+# Plot the correlation matrix
+ggcorrplot(cor_matrix, 
+           hc.order = FALSE,
+           method = "square") +
+  theme(
+    axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10)
+  )
+
+
+
+
+```
+
 
 
 # Baseline with LS Norms
 
 ```{r}
 df_with_baseline = read_csv("../../data/processed/sentence_pairs_with_baseline.csv") %>%
-  select(-X1) %>%
   drop_na(sensorimotor_distance) %>%
   drop_na(baseline_distance)
 
@@ -785,4 +1168,5 @@ anova(model_bow_sm, model_just_sm)
 
 
 ```
+
 
