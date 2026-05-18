@@ -21,6 +21,7 @@ library(ggridges)
 library(broom.mixed)
 library(lmerTest)
 library(ggcorrplot)
+library(kableExtra)
 ```
 
 # Introduction
@@ -41,6 +42,7 @@ We use these norms in several analyses:
 First, load the data.
 
 ```{r}
+# setwd("/Users/seantrott/Dropbox/UCSD/Research/Ambiguity/SSD/cs_norms/src/analysis")
 df_contextualized_meanings = read_csv("../../data/processed/contextualized_sensorimotor_norms.csv")
 nrow(df_contextualized_meanings)
 ```
@@ -108,31 +110,12 @@ ggcorrplot(cors,
     axis.text.y = element_text(size = 10)
   )
 
+ggcorrplot(cors, hc.order = FALSE, type = "upper",
+                      lab = TRUE, lab_size = 2.5) +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1))
 
 
-```
 
-## Visualizing specific words
-
-
-```{r specific_word_market}
-df_contextualized_meanings_long %>%
-  group_by(word, Dimension) %>%
-  mutate(Strength_scaled = scale(Strength)) %>%
-  filter(word == "market") %>%
-  ggplot(aes(x = reorder(Dimension, Strength_scaled),
-             y = Strength_scaled,
-             fill = Dimension)) +
-  geom_bar(stat = "identity") +
-  theme_bw() +
-  coord_flip() +
-  labs(x = "Dimension",
-       y = "Sensorimotor Strength (z-scored)") +
-  facet_wrap(~sentence) +
-  scale_fill_manual(values = viridisLite::viridis(11, option = "mako", 
-                                                   begin = 0.8, end = 0.15)) + 
-  theme(text = element_text(size=16)) +
-  guides(fill=FALSE)
 
 ```
 
@@ -178,15 +161,20 @@ nrow(df_dom_plus_sm)
 We also load and merge the Lancaster norms, as a control.
 
 ```{r}
-df_lancaster = read_csv("../../data/lexical/lancaster_norms.csv")
-
-df_lancaster = df_lancaster %>%
+df_lancaster <- read_csv("../../data/lexical/lancaster_norms.csv") %>%
   mutate(word = tolower(Word)) %>%
-  select(-Foot_leg.SD, -Torso.SD, -Head.SD, -Hand_arm.SD)
+  rename(
+    Foot_leg.SD.LS = Foot_leg.SD,
+    Hand_arm.SD.LS = Hand_arm.SD,
+    Head.SD.LS = Head.SD,
+    Torso.SD.LS = Torso.SD
+  )
 
-df_dom_plus_sm = df_dom_plus_sm %>%
+df_dom_plus_sm <- df_dom_plus_sm %>%
   inner_join(df_lancaster)
+
 nrow(df_dom_plus_sm)
+
 ```
 
 
@@ -214,6 +202,9 @@ df_dom_plus_sm = df_dom_plus_sm %>%
       Foot_leg.M
     )
   ),
+  minkowski3_strength = sum(c(Vision.M, Hearing.M, Olfaction.M, Touch.M, Taste.M,
+                               Interoception.M, Head.M, Mouth_throat.M, Torso.M,
+                               Hand_arm.M, Foot_leg.M)^3)^(1/3),
   max_perceptual_strength = max(
     c(
       ## Modalities
@@ -248,6 +239,9 @@ df_dom_plus_sm %>%
 
 cor.test(df_dom_plus_sm$Max_strength.sensorimotor,
          df_dom_plus_sm$max_strength)
+
+cor.test(df_dom_plus_sm$max_strength,
+         df_dom_plus_sm$minkowski3_strength)
 ```
 
 
@@ -269,6 +263,15 @@ df_dom_plus_sm %>%
   theme(text = element_text(size=16))
 
   
+df_dom_plus_sm %>%
+  ggplot(aes(x = minkowski3_strength,
+             y = dominance)) +
+  geom_point(alpha = .4) +
+  geom_smooth(method = "lm") +
+  labs(x = "Aggregate Sensorimotor Strength (Minkowski)",
+       y = "Dominance") +
+  theme_minimal() +
+  theme(text = element_text(size=16))
 
 model_full = lmer(data = df_dom_plus_sm,
                 dominance ~ 
@@ -286,17 +289,55 @@ model_reduced = lmer(data = df_dom_plus_sm,
 summary(model_full)
 anova(model_full, model_reduced)
 
-df_dom_plus_sm %>%
-  mutate(resid = residuals(model_reduced)) %>%
-  ggplot(aes(x = max_strength,
-             y = resid)) +
-  geom_point(alpha = .4) +
-  geom_smooth(method = "lm") +
-  labs(x = "Maximum Contextualized Strength",
-       y = "Residuals (Reduced model)") +
-  theme_bw()
+
+
+
+model_full = lmer(data = df_dom_plus_sm,
+                dominance ~ 
+                  minkowski3_strength +
+                  Max_strength.sensorimotor + Minkowski3.sensorimotor +
+                  (1 | word),
+                REML = FALSE)
+
+model_reduced = lmer(data = df_dom_plus_sm,
+                dominance ~ 
+                  # max_strength + 
+                  Max_strength.sensorimotor + Minkowski3.sensorimotor +
+                  (1 | word),
+                REML = FALSE)
+summary(model_full)
+anova(model_full, model_reduced)
 
 ```
+
+### Examples
+
+```{r}
+### Top 10
+df_dom_plus_sm %>%
+  arrange(desc(minkowski3_strength)) %>%
+  select(word, sentence, minkowski3_strength, dominance) %>%
+  head(10)
+
+### Bottom 10
+df_dom_plus_sm %>%
+  arrange(minkowski3_strength) %>%
+  select(word, sentence, minkowski3_strength, dominance) %>%
+  head(10)
+
+### Top 10
+df_dom_plus_sm %>%
+  arrange(desc(max_strength)) %>%
+  select(word, sentence, max_strength, dominance) %>%
+  head(10)
+
+### Bottom 10
+df_dom_plus_sm %>%
+  arrange(max_strength) %>%
+  select(word, sentence, max_strength, dominance) %>%
+  head(10)
+```
+
 
 ### Which dimension best predicts dominance?
 
@@ -402,6 +443,9 @@ cor.test(sense_diffs$vision_diff, sense_diffs$dom_diff)
 
 
 
+# How much does context add?
+
+Here, we inspect how much information the CS norms provide, both relative to the LS norms and just overall (i.e., how much context pushes sensorimotor vectors around).
 
 
 ## Comparing dimensions to Lancaster
@@ -409,40 +453,28 @@ cor.test(sense_diffs$vision_diff, sense_diffs$dom_diff)
 Now, we compare each dimension to the LS Norms.
 
 ```{r ls_deviation_market}
-df_diffs = df_dom_plus_sm %>%
-  mutate(vision_diff = (Vision.M - Visual.mean),
-         auditory_diff = (Hearing.M - Auditory.mean),
-         intero_diff = (Interoception.M - Interoceptive.mean),
-         olfactory_diff = (Olfaction.M - Olfactory.mean),
-         touch_diff = (Touch.M - Haptic.mean),
-         taste_diff = (Taste.M - Gustatory.mean),
-         torso_diff = (Torso.M - Torso.mean),
-         hand_arm_diff = (Hand_arm.M - Hand_arm.mean),
-         foot_leg_diff = (Foot_leg.M - Foot_leg.mean),
-         head_diff = (Head.M - Head.mean),
+df_diffs_raw <- df_dom_plus_sm %>%
+  mutate(vision_diff       = (Vision.M       - Visual.mean),
+         auditory_diff     = (Hearing.M      - Auditory.mean),
+         intero_diff       = (Interoception.M - Interoceptive.mean),
+         olfactory_diff    = (Olfaction.M    - Olfactory.mean),
+         touch_diff        = (Touch.M        - Haptic.mean),
+         taste_diff        = (Taste.M        - Gustatory.mean),
+         torso_diff        = (Torso.M        - Torso.mean),
+         hand_arm_diff     = (Hand_arm.M     - Hand_arm.mean),
+         foot_leg_diff     = (Foot_leg.M     - Foot_leg.mean),
+         head_diff         = (Head.M         - Head.mean),
          mouth_throat_diff = (Mouth_throat.M - Mouth.mean)) %>%
-  pivot_longer(cols = c(vision_diff,
-                        auditory_diff,
-                        intero_diff,
-                        olfactory_diff,
-                        touch_diff,
-                        taste_diff,
-                        torso_diff,
-                        hand_arm_diff,
-                        foot_leg_diff,
-                        head_diff,
-                        mouth_throat_diff), 
-               names_to = "Dimension",
-               values_to = "Diff") %>%
-  mutate(Dimension = gsub('_diff', '', Dimension)) %>%
-  mutate(Dimension = case_when(
-    Dimension == "intero" ~ "Interoception",
-    Dimension == "auditory" ~ "Hearing",
-    Dimension == "olfactory" ~ "Olfaction",
-    TRUE ~ str_to_title(Dimension)
-  ))
-
-df_diffs$Dimension = factor(df_diffs$Dimension,
+  pivot_longer(cols = ends_with("_diff"),
+               names_to = "Dimension", values_to = "Diff") %>%
+  mutate(Dimension = gsub('_diff', '', Dimension),
+         Dimension = case_when(
+           Dimension == "intero" ~ "Interoception",
+           Dimension == "auditory" ~ "Hearing",
+           Dimension == "olfactory" ~ "Olfaction",
+           TRUE ~ str_to_title(Dimension)
+         ))
+df_diffs_raw$Dimension = factor(df_diffs_raw$Dimension,
                             levels = rev(c(
                               'Vision',
                               'Hearing',
@@ -456,7 +488,13 @@ df_diffs$Dimension = factor(df_diffs$Dimension,
                               'Hand_arm',
                               'Foot_leg'
                             )))
-df_diffs %>%
+
+
+
+
+
+
+df_diffs_raw %>%
   filter(word == "market") %>%
   ggplot(aes(x = Dimension,
              y = Diff,
@@ -475,27 +513,661 @@ df_diffs %>%
 
 
 
+df_paired_market <- df_dom_plus_sm %>%
+  filter(word == "market") %>%
+  select(sentence,
+         Vision.M, Hearing.M, Olfaction.M, Taste.M, Interoception.M, Touch.M,
+         Mouth_throat.M, Head.M, Torso.M, Hand_arm.M, Foot_leg.M,
+         Visual.mean, Auditory.mean, Olfactory.mean, Gustatory.mean,
+         Interoceptive.mean, Haptic.mean, Mouth.mean, Head.mean,
+         Torso.mean, Hand_arm.mean, Foot_leg.mean) %>%
+  pivot_longer(cols = -sentence, names_to = "raw_dim", values_to = "Rating") %>%
+  mutate(
+    Source = case_when(
+      str_detect(raw_dim, "\\.M$") ~ "CS Norms (contextualized)",
+      TRUE ~ "LS Norms (decontextualized)"
+    ),
+    Dimension = case_when(
+      raw_dim %in% c("Vision.M", "Visual.mean") ~ "Vision",
+      raw_dim %in% c("Hearing.M", "Auditory.mean") ~ "Hearing",
+      raw_dim %in% c("Olfaction.M", "Olfactory.mean") ~ "Olfaction",
+      raw_dim %in% c("Taste.M", "Gustatory.mean") ~ "Taste",
+      raw_dim %in% c("Interoception.M", "Interoceptive.mean") ~ "Interoception",
+      raw_dim %in% c("Touch.M", "Haptic.mean") ~ "Touch",
+      raw_dim %in% c("Mouth_throat.M", "Mouth.mean") ~ "Mouth_throat",
+      raw_dim %in% c("Head.M", "Head.mean") ~ "Head",
+      raw_dim %in% c("Torso.M", "Torso.mean") ~ "Torso",
+      raw_dim %in% c("Hand_arm.M", "Hand_arm.mean") ~ "Hand_arm",
+      raw_dim %in% c("Foot_leg.M", "Foot_leg.mean") ~ "Foot_leg"
+    )
+  )
+
+df_paired_market$Dimension <- factor(df_paired_market$Dimension,
+  levels = rev(c('Vision','Hearing','Olfaction','Taste','Interoception',
+                 'Touch','Mouth_throat','Head','Torso','Hand_arm','Foot_leg')))
+
+df_paired_market %>%
+  ggplot(aes(x = Dimension, y = Rating, fill = Source)) +
+  geom_bar(stat = "summary", position = position_dodge(width = 0.8), width = 0.7) +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "Dimension", y = "Sensorimotor Strength", fill = NULL) +
+  scale_fill_manual(values = c("CS Norms (contextualized)" = "#2c7a7b",
+                               "LS Norms (decontextualized)" = "#7c5e9c")) +
+  facet_wrap(~sentence) +
+  theme(text = element_text(size = 14), legend.position = "bottom")
+
 ```
 
-We also look at this across *all* words:
 
-```{r ls_deviation_overall}
-df_diffs %>%
-  ggplot(aes(x = reorder(Dimension, Diff),
-             y = Diff)) +
-  geom_violin() +
-  geom_jitter(alpha = .1,
-              width = .1) +
-  geom_hline(yintercept = 0, linetype = "dotted") +
+
+### Distribution of deviations
+
+
+```{r largest_dev}
+df_diffs_raw %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  summarise(mean_abs_diff = mean(abs_diff),
+            median_abs_diff = median(abs_diff),
+            sd_abs_diff = sd(abs_diff),
+            min_abs_diff = min(abs_diff),
+            max_abs_diff = max(abs_diff))
+
+df_diffs_raw %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  ggplot(aes(x = abs_diff)) +
+  geom_histogram() +
+  labs(x = "Absolute Deviation") +
+  theme_minimal() +
+  facet_wrap(~Dimension) +
+   theme(text = element_text(size=16))
+
+
+df_by_sentence_raw = df_diffs_raw %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  group_by(word, sentence) %>%
+  summarise(mean_abs_diff = mean(abs_diff),
+            min_diff = min(abs_diff),
+            max_diff = max(abs_diff)) %>%
+  ungroup()
+
+df_by_sentence_raw %>%
+  summarise(mean_diff = mean(mean_abs_diff),
+            median_abs_diff = median(mean_abs_diff),
+            sd_abs_diff = sd(mean_abs_diff),
+            min_abs_diff = min(mean_abs_diff),
+            max_abs_diff = max(mean_abs_diff))
+
+
+df_by_sentence_raw %>%
+  ggplot(aes(x = mean_abs_diff)) +
+  geom_histogram() +
+  labs(x = "Mean Absolute Deviation (By Sentence)") +
+  theme_minimal() +
+   theme(text = element_text(size=16))
+
+df_by_sentence_raw %>%
+  ggplot(aes(x = max_diff)) +
+  geom_histogram() +
+  labs(x = "Max Absolute Deviation (By Sentence)") +
+  theme_minimal() +
+   theme(text = element_text(size=16))
+
+
+df_by_sentence_raw %>%
+  arrange(desc(max_diff)) %>%
+  head(10)
+
+
+
+
+df_by_word_raw = df_diffs_raw %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  group_by(word) %>%
+  summarise(mean_abs_diff = mean(abs_diff)) %>%
+  ungroup()
+
+df_by_word_raw %>%
+  summarise(mean_diff = mean(mean_abs_diff),
+            median_abs_diff = median(mean_abs_diff),
+            sd_abs_diff = sd(mean_abs_diff),
+            min_abs_diff = min(mean_abs_diff),
+            max_abs_diff = max(mean_abs_diff))
+
+  
+df_diffs_raw %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  group_by(word) %>%
+  summarise(mean_abs_diff = mean(abs_diff),
+            sd_abs_diff = sd(abs_diff),
+            range_diff = max(abs_diff) - min(abs_diff)) %>%
+  arrange(desc(mean_abs_diff)) %>%
+  head(5)
+
+
+
+```
+
+### Individual words
+
+```{r individual_words}
+
+df_diffs_raw = df_diffs_raw %>%
+  mutate(sense = str_extract(context, "M[12]"),         # "M1" or "M2"
+         context_within_sense = str_extract(context, "[ab]"))  # "a" or "b"
+
+df_diffs_raw %>%
+  filter(word == "jam") %>%
+  mutate(sentence = fct_reorder(sentence, as.numeric(factor(sense)))) %>%
+  ggplot(aes(x = Dimension,
+             y = Diff,
+             fill = Dimension)) +
+  geom_bar(stat = "summary") + 
+  geom_vline(xintercept = 0, linetype = "dotted") +
   theme_bw() +
   coord_flip() +
   labs(x = "Dimension",
        y = "Deviation from Lancaster Norms") +
-  theme(text = element_text(size=16))
+  scale_fill_manual(values = viridisLite::viridis(11, option = "mako", 
+                                                   begin = 0.8, end = 0.15)) + 
+  facet_wrap(~sentence) +
+  theme(text = element_text(size=16)) +
+  guides(fill = FALSE)
+
+df_diffs_raw %>%
+  mutate(sentence = fct_reorder(sentence, as.numeric(factor(sense)))) %>%
+  filter(word == "punch") %>%
+  ggplot(aes(x = Dimension,
+             y = Diff,
+             fill = Dimension)) +
+  geom_bar(stat = "summary") + 
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "Dimension",
+       y = "Deviation from Lancaster Norms") +
+  scale_fill_manual(values = viridisLite::viridis(11, option = "mako", 
+                                                   begin = 0.8, end = 0.15)) + 
+  facet_wrap(~sentence) +
+  theme(text = element_text(size=16)) +
+  guides(fill = FALSE)
+
+df_diffs_raw %>%
+  mutate(sentence = fct_reorder(sentence, as.numeric(factor(sense)))) %>%
+  filter(word == "match") %>%
+  ggplot(aes(x = Dimension,
+             y = Diff,
+             fill = Dimension)) +
+  geom_bar(stat = "summary") + 
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "Dimension",
+       y = "Deviation from Lancaster Norms") +
+  scale_fill_manual(values = viridisLite::viridis(11, option = "mako", 
+                                                   begin = 0.8, end = 0.15)) + 
+  facet_wrap(~sentence) +
+  theme(text = element_text(size=16)) +
+  guides(fill = FALSE)
+
+
+df_diffs_raw %>%
+  mutate(sentence = fct_reorder(sentence, as.numeric(factor(sense)))) %>%
+  filter(word == "pen") %>%
+  ggplot(aes(x = Dimension,
+             y = Diff,
+             fill = Dimension)) +
+  geom_bar(stat = "summary") + 
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "Dimension",
+       y = "Deviation from Lancaster Norms") +
+  scale_fill_manual(values = viridisLite::viridis(11, option = "mako", 
+                                                   begin = 0.8, end = 0.15)) + 
+  facet_wrap(~sentence) +
+  theme(text = element_text(size=16)) +
+  guides(fill = FALSE)
+
+
+df_diffs_raw %>%
+  mutate(sentence = fct_reorder(sentence, as.numeric(factor(sense)))) %>%
+  filter(word == "band") %>%
+  ggplot(aes(x = Dimension,
+             y = Diff,
+             fill = Dimension)) +
+  geom_bar(stat = "summary") + 
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "Dimension",
+       y = "Deviation from Lancaster Norms") +
+  scale_fill_manual(values = viridisLite::viridis(11, option = "mako", 
+                                                   begin = 0.8, end = 0.15)) + 
+  facet_wrap(~sentence) +
+  theme(text = element_text(size=16)) +
+  guides(fill = FALSE)
+
 ```
 
 
-## How does dominance relate to deviation from the LS Norms?
+### Which dimensions have the largest deviations?
+
+```{r}
+df_diffs_raw %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  group_by(Dimension) %>%
+  summarise(mean_abs_diff = mean(abs_diff),
+            sd_abs_diff = sd(abs_diff),
+            range_diff = max(abs_diff) - min(abs_diff)) %>%
+  arrange(desc(range_diff))
+```
+
+## Z-scored deviations
+
+```{r zscored_diffs}
+SD_FLOOR <- 0.1
+
+df_diffs_z_floored <- df_dom_plus_sm %>%
+  mutate(
+    vision_diff       = (Vision.M       - Visual.mean)        / pmax(Visual.SD, SD_FLOOR),
+    auditory_diff     = (Hearing.M      - Auditory.mean)      / pmax(Auditory.SD, SD_FLOOR),
+    intero_diff       = (Interoception.M - Interoceptive.mean) / pmax(Interoceptive.SD, SD_FLOOR),
+    olfactory_diff    = (Olfaction.M    - Olfactory.mean)     / pmax(Olfactory.SD, SD_FLOOR),
+    touch_diff        = (Touch.M        - Haptic.mean)        / pmax(Haptic.SD, SD_FLOOR),
+    taste_diff        = (Taste.M        - Gustatory.mean)     / pmax(Gustatory.SD, SD_FLOOR),
+    torso_diff        = (Torso.M        - Torso.mean)         / pmax(Torso.SD.LS, SD_FLOOR),
+    hand_arm_diff     = (Hand_arm.M     - Hand_arm.mean)      / pmax(Hand_arm.SD.LS, SD_FLOOR),
+    foot_leg_diff     = (Foot_leg.M     - Foot_leg.mean)      / pmax(Foot_leg.SD.LS, SD_FLOOR),
+    head_diff         = (Head.M         - Head.mean)          / pmax(Head.SD.LS, SD_FLOOR),
+    mouth_throat_diff = (Mouth_throat.M - Mouth.mean)         / pmax(Mouth.SD, SD_FLOOR)
+  ) %>%
+  pivot_longer(cols = ends_with("_diff"),
+               names_to = "Dimension", values_to = "Diff") %>%
+  mutate(Dimension = gsub('_diff', '', Dimension),
+         Dimension = case_when(
+           Dimension == "intero" ~ "Interoception",
+           Dimension == "auditory" ~ "Hearing",
+           Dimension == "olfactory" ~ "Olfaction",
+           TRUE ~ str_to_title(Dimension)
+         )) %>%
+  select(word, sentence, Dimension, Diff, context, dominance)
+
+
+
+
+# Distribution
+sentence_dev_floored <- df_diffs_z_floored %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  group_by(word, sentence) %>%
+  summarise(mean_abs_diff = mean(abs_diff, na.rm = TRUE),
+            max_abs_diff = max(abs_diff),
+            .groups = "drop")
+
+sentence_dev_floored %>%
+  ggplot(aes(x = mean_abs_diff)) +
+  geom_histogram(bins = 30) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
+  labs(x = "Mean Absolute Standardized Deviation (By Sentence)",
+       y = "Count of sentences") +
+  theme_minimal() +
+  theme(text = element_text(size=16))
+
+sentence_dev_floored %>%
+  ggplot(aes(x = max_abs_diff)) +
+  geom_histogram(bins = 30) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
+  labs(x = "Max Absolute Standardized Deviation (By Sentence)",
+       y = "Count of sentences") +
+  theme_minimal() +
+  theme(text = element_text(size=16))
+
+
+### Overall % sentences more than one on average
+sentence_dev_floored %>%
+  mutate(greater_than_one = mean_abs_diff > 1) %>%
+  summarise(prop_more_than_one = mean(greater_than_one),
+            max_dev = max(mean_abs_diff))
+
+### Overall % sentences more than one maximally
+quantile(sentence_dev_floored$max_abs_diff, 
+         probs = c(0.25, 0.5, 0.75, 0.9, 0.95, 0.99),
+         na.rm = TRUE)
+
+
+### Overall deviations by dimension
+df_diffs_z_floored %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  ggplot(aes(x = abs_diff)) +
+  geom_histogram() +
+  labs(x = "Standardized Absolute Deviation") +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
+  theme_minimal() +
+  facet_wrap(~Dimension) +
+   theme(text = element_text(size=16))
+
+### Overall % of contexts exceeding 1 SD
+df_diffs_z_floored %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  mutate(greater_than_one = abs_diff > 1) %>%
+  summarise(prop_more_than_one = mean(greater_than_one),
+            max_dev = max(abs_diff))
+
+#### Additional summary statistics
+df_diffs_z_floored %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  summarise(mean_abs_diff = mean(abs_diff),
+            median_abs_diff = median(abs_diff),
+            sd_abs_diff = sd(abs_diff),
+            min_abs_diff = min(abs_diff),
+            max_abs_diff = max(abs_diff))
+
+df_by_sentence_z_floored = df_diffs_z_floored %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  group_by(word, sentence) %>%
+  summarise(mean_abs_diff = mean(abs_diff)) %>%
+  ungroup()
+
+df_by_sentence_z_floored %>%
+  summarise(mean_diff = mean(mean_abs_diff),
+            median_abs_diff = median(mean_abs_diff),
+            sd_abs_diff = sd(mean_abs_diff),
+            min_abs_diff = min(mean_abs_diff),
+            max_abs_diff = max(mean_abs_diff))
+
+df_by_word_z_floored = df_diffs_z_floored %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  group_by(word) %>%
+  summarise(mean_abs_diff = mean(abs_diff)) %>%
+  ungroup()
+
+df_by_word_z_floored %>%
+  summarise(mean_diff = mean(mean_abs_diff),
+            median_abs_diff = median(mean_abs_diff),
+            sd_abs_diff = sd(mean_abs_diff),
+            min_abs_diff = min(mean_abs_diff),
+            max_abs_diff = max(mean_abs_diff))
+
+```
+
+
+### Compare to raw differences
+
+```{r}
+
+# Raw (unstandardized) mean absolute deviation per sentence
+sentence_dev_raw <- df_diffs_raw %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  group_by(word, sentence, context) %>%
+  summarise(mean_abs_diff = mean(abs_diff, na.rm = TRUE),
+            .groups = "drop") %>%
+  mutate(version = "Raw")
+
+# Standardized (floored) mean absolute deviation per sentence
+sentence_dev_z <- df_diffs_z_floored %>%
+  mutate(abs_diff = abs(Diff)) %>%
+  group_by(word, sentence, context) %>%
+  summarise(mean_abs_diff = mean(abs_diff, na.rm = TRUE),
+            .groups = "drop") %>%
+  mutate(version = "Standardized")
+
+
+# By sentence
+sentence_compare <- sentence_dev_raw %>%
+  select(word, sentence, context, raw = mean_abs_diff) %>%
+  inner_join(sentence_dev_z %>%
+               select(word, sentence, context, standardized = mean_abs_diff),
+             by = c("word", "sentence", "context"))
+
+cor.test(sentence_compare$raw, sentence_compare$standardized, method = "spearman")
+cor.test(sentence_compare$raw, sentence_compare$standardized, method = "pearson")
+
+sentence_compare %>%
+  ggplot(aes(x = raw, y = standardized)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(x = "Raw mean absolute deviation",
+       y = "Standardized mean absolute deviation",
+       title = "By-sentence deviations") +
+  theme_minimal() +
+  theme(text = element_text(size=16))
+
+
+```
+
+
+## Within-word range
+
+Here, we calculate the *range* of sensorimotor associatoins for each dimension across the contexts of use for each word.
+
+### Across all contexts
+
+```{r within_word_range}
+
+df_rawc_with_norms = read_csv("../../data/processed/sentence_pairs_with_sensorimotor_distance.csv") %>%
+  drop_na(sensorimotor_distance) %>%
+  select(sensorimotor_distance, action_distance, perceptual_distance,
+         word, same, ambiguity_type, sentence1, sentence2, mean_relatedness, Class, version)
+
+nrow(df_rawc_with_norms)
+
+
+word_dim_range <- df_dom_plus_sm %>%
+  pivot_longer(cols = c(Vision.M, Hearing.M, Olfaction.M, Taste.M,
+                        Interoception.M, Touch.M, Mouth_throat.M,
+                        Head.M, Hand_arm.M, Foot_leg.M, Torso.M),
+               names_to = "Dimension", values_to = "CS_value") %>%
+  mutate(Dimension = gsub("\\.M$", "", Dimension)) %>%
+  group_by(word, Dimension) %>%
+  summarise(within_range = max(CS_value, na.rm = TRUE) - min(CS_value, na.rm = TRUE),
+            .groups = "drop")
+
+# Aggregate to word level (mean range across dimensions)
+word_range <- word_dim_range %>%
+  group_by(word) %>%
+  summarise(mean_range = mean(within_range, na.rm = TRUE),
+            max_range = max(within_range, na.rm = TRUE),
+            .groups = "drop") %>%
+  arrange(desc(mean_range))
+
+print(head(word_range, 15))
+print(tail(word_range, 15))
+
+# By dimension
+word_dim_range %>%
+  ggplot(aes(x = within_range)) +
+  geom_histogram(bins = 30) +
+  labs(x = "Within-Word Range of CS Ratings (across contexts)",
+       y = "Count of words") +
+  theme_minimal() +
+  facet_wrap(~Dimension)
+
+# Distribution
+word_range %>%
+  ggplot(aes(x = mean_range)) +
+  geom_histogram(bins = 30) +
+  labs(x = "Mean Within-Word Range of CS Ratings (across contexts)",
+       y = "Count of words") +
+  theme_minimal()
+
+# Summary stats
+word_range %>%
+  summarise(mean = mean(mean_range),
+            sd = sd(mean_range),
+            median = median(mean_range),
+            min = min(mean_range),
+            max = max(mean_range))
+
+
+# Get per-word ambiguity type
+word_ambiguity <- df_rawc_with_norms %>%
+  distinct(word, ambiguity_type)
+
+# Merge with within-word range
+word_range_with_amb <- word_range %>%
+  inner_join(word_ambiguity, by = "word")
+
+# Summary stats by ambiguity type
+word_range_with_amb %>%
+  group_by(ambiguity_type) %>%
+  summarise(mean = mean(mean_range),
+            sd = sd(mean_range),
+            median = median(mean_range),
+            n = n(),
+            .groups = "drop")
+
+# Test the difference
+summary(lm(data = word_range_with_amb,
+           mean_range ~ ambiguity_type))
+t.test(mean_range ~ ambiguity_type, data = word_range_with_amb)
+
+
+# Visualize
+word_range_with_amb %>%
+  ggplot(aes(x = ambiguity_type, y = mean_range, fill = ambiguity_type)) +
+  geom_boxplot(alpha = 0.6) +
+  geom_jitter(width = 0.15, alpha = 0.3) +
+  labs(x = "Ambiguity Type",
+       y = "Mean Within-Word Range of CS Ratings") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+```
+
+### Between vs. Within sense
+
+```{r within_word_range_senses}
+# Need sense info from context column (M1/M2)
+word_range_decomposed <- df_dom_plus_sm %>%
+  mutate(sense = str_extract(context, "M[12]")) %>%
+  pivot_longer(cols = c(Vision.M, Hearing.M, Olfaction.M, Taste.M,
+                        Interoception.M, Touch.M, Mouth_throat.M,
+                        Head.M, Hand_arm.M, Foot_leg.M, Torso.M),
+               names_to = "Dimension", values_to = "CS_value") %>%
+  mutate(Dimension = gsub("\\.M$", "", Dimension)) %>%
+  group_by(word, Dimension, sense) %>%
+  summarise(sense_mean = mean(CS_value),
+            sense_within_range = max(CS_value) - min(CS_value),
+            .groups = "drop") %>%
+  group_by(word, Dimension) %>%
+  summarise(between_sense_range = max(sense_mean) - min(sense_mean),
+            within_sense_range = mean(sense_within_range),
+            .groups = "drop") %>%
+  group_by(word) %>%
+  summarise(mean_between_sense = mean(between_sense_range),
+            mean_within_sense = mean(within_sense_range),
+            max_between_sense = max(between_sense_range),
+            max_within_sense = max(within_sense_range),
+            .groups = "drop")
+
+
+word_range_decomposed %>%
+  inner_join(word_ambiguity, by = "word") %>%
+  group_by(ambiguity_type) %>%
+  summarise(between = mean(mean_between_sense),
+            within = mean(mean_within_sense),,
+            between_max = mean(max_between_sense),
+            within_max = mean(max_within_sense),
+            n = n())
+
+
+# Test each separately
+t.test(mean_between_sense ~ ambiguity_type, 
+       data = word_range_decomposed %>% inner_join(word_ambiguity, by = "word"))
+t.test(mean_within_sense ~ ambiguity_type,
+       data = word_range_decomposed %>% inner_join(word_ambiguity, by = "word"))
+
+# Test max
+t.test(max_between_sense ~ ambiguity_type, 
+       data = word_range_decomposed %>% inner_join(word_ambiguity, by = "word"))
+t.test(max_within_sense ~ ambiguity_type,
+       data = word_range_decomposed %>% inner_join(word_ambiguity, by = "word"))
+
+
+word_range_decomposed_long = word_range_decomposed %>%
+  inner_join(word_ambiguity, by = "word") %>%
+  pivot_longer(cols = c(mean_between_sense, mean_within_sense),
+               names_to = "comparison",
+               values_to = "word_range")
+
+summary(lmer(data = word_range_decomposed_long,
+           word_range ~ comparison + (1|word)))
+
+summary(lmer(data = word_range_decomposed_long,
+           word_range ~ ambiguity_type*comparison + (1|word)))
+
+
+
+word_range_decomposed_long %>%
+  mutate(comparison = case_when(
+    comparison == "mean_between_sense" ~ "Different Sense",
+    comparison == "mean_within_sense" ~ "Same Sense"
+  )) %>%
+  ggplot(aes(x = word_range,
+             y = ambiguity_type,
+             fill = comparison)) +
+  geom_density_ridges2(aes(height = ..density..), 
+                       color = NA,
+                       alpha = 0.5, 
+                       scale=0.85, 
+                       stat="density") +
+  labs(x = "Mean Within-Word Range of CS Ratings",
+       y = NULL,
+       fill = NULL) +
+  theme_minimal() +
+  scale_fill_manual(
+    values = c("Same Sense" = viridisLite::viridis(2, option = "mako", begin = 0.8, end = 0.15)[1],
+               "Different Sense" = viridisLite::viridis(2, option = "mako", begin = 0.8, end = 0.15)[2])
+  ) + 
+  theme(text = element_text(size = 20))
+
+
+
+
+word_range_decomposed_long = word_range_decomposed %>%
+  inner_join(word_ambiguity, by = "word") %>%
+  pivot_longer(cols = c(max_between_sense, max_within_sense),
+               names_to = "comparison",
+               values_to = "word_range")
+
+
+
+summary(lmer(data = word_range_decomposed_long,
+           word_range ~ comparison + (1|word)))
+
+summary(lmer(data = word_range_decomposed_long,
+           word_range ~ ambiguity_type*comparison + (1|word)))
+
+
+
+word_range_decomposed_long %>%
+  mutate(comparison = case_when(
+    comparison == "max_between_sense" ~ "Different Sense",
+    comparison == "max_within_sense" ~ "Same Sense"
+  )) %>%
+  ggplot(aes(x = word_range,
+             y = ambiguity_type,
+             fill = comparison)) +
+  geom_density_ridges2(aes(height = ..density..), 
+                       color = NA,
+                       alpha = 0.5, 
+                       scale=0.85, 
+                       stat="density") +
+  labs(x = "Max Within-Word Range of CS Ratings",
+       y = NULL,
+       fill = NULL) +
+  theme_minimal() +
+  scale_fill_manual(
+    values = c("Same Sense" = viridisLite::viridis(2, option = "mako", begin = 0.8, end = 0.15)[1],
+               "Different Sense" = viridisLite::viridis(2, option = "mako", begin = 0.8, end = 0.15)[2])
+  ) + 
+  theme(text = element_text(size = 20))
+```
+
+
+
+# How does dominance relate to deviation from the LS Norms?
 
 This question can in turn be decomposed into two questions:
 
@@ -534,7 +1206,7 @@ The earlier analysis of dominance suggests that more dominant senses are more co
 We find that this is true: that is, more dominant senses are *more concrete* on average than the LS norm.
 
 ```{r}
-df_diffs_avg = df_diffs %>%
+df_diffs_avg = df_diffs_raw %>%
   group_by(word, sentence, context) %>%
   summarise(mean_diff = mean(Diff))
 
@@ -571,11 +1243,12 @@ Here, we load a version of the dataset that also contains a *baseline* measure: 
 df_rawc_with_norms = read_csv("../../data/processed/sentence_pairs_with_sensorimotor_distance.csv") %>%
   drop_na(sensorimotor_distance) %>%
   select(sensorimotor_distance, action_distance, perceptual_distance,
-         word, same, ambiguity_type, sentence1, sentence2, mean_relatedness, Class)
+         word, same, ambiguity_type, sentence1, sentence2, mean_relatedness, Class, version)
 
 nrow(df_rawc_with_norms)
 
 ```
+
 
 
 ## Load English RAW-C data
@@ -703,6 +1376,30 @@ model_reduced = lmer(data = df_rawc_with_norms,
 
 summary(model_full)
 anova(model_full, model_reduced)
+
+
+model_full_at = lmer(data = df_rawc_with_norms,
+                  sensorimotor_distance ~ same * ambiguity_type +
+                    (1 + same | word),
+                  control=lmerControl(optimizer="bobyqa"),
+                  REML = FALSE)
+
+model_reduced_at = lmer(data = df_rawc_with_norms,
+                  sensorimotor_distance ~ same + ambiguity_type +
+                    (1 + same | word),
+                  control=lmerControl(optimizer="bobyqa"),
+                  REML = FALSE)
+
+summary(model_full_at)
+anova(model_full_at, model_reduced_at)
+
+
+df_rawc_with_norms %>%
+  group_by(same, ambiguity_type) %>%
+  summarise(mean = mean(sensorimotor_distance),
+            sd = sd(sensorimotor_distance))
+
+
 ```
 
 
@@ -1169,4 +1866,710 @@ anova(model_bow_sm, model_just_sm)
 
 ```
 
+
+# Predicting Trott & Bergen (2023)
+
+Here, we also ask whether sensorimotor distance can account for variance in RT and accuracy on a primed sensibility judgment task.
+
+```{r}
+# ============================================================
+# Load T&B 2023 data and merge with norms
+# ============================================================
+
+df_s1 <- read_csv("../../data/tb2023/polysemy_s1_final.csv")
+df_s2 <- read_csv("../../data/tb2023/polysemy_s2_final.csv")
+df_tb2023 <- bind_rows(df_s1, df_s2)
+nrow(df_tb2023)
+
+# Item-level aggregates
+df_tb2023_agg_acc <- df_tb2023 %>%
+  group_by(word, same, version) %>%
+  summarise(accuracy = mean(correct_response), .groups = "drop")
+
+df_tb2023_agg_rt <- df_tb2023 %>%
+  filter(correct_response == TRUE) %>%
+  group_by(word, same, version) %>%
+  summarise(mean_rt = mean(rt), .groups = "drop") %>%
+  mutate(mean_log_rt = log10(mean_rt))
+
+# Merge with sensorimotor norms (for Part 1)
+df_sm_acc <- df_rawc_with_norms %>%
+  select(word, same, version, sensorimotor_distance,
+         action_distance, perceptual_distance) %>%
+  inner_join(df_tb2023_agg_acc, by = c("word", "same", "version"))
+
+df_sm_rt <- df_rawc_with_norms %>%
+  select(word, same, version, sensorimotor_distance,
+         action_distance, perceptual_distance) %>%
+  inner_join(df_tb2023_agg_rt, by = c("word", "same", "version"))
+
+# Merge with full distributional sweep (for Part 2)
+df_full_acc <- df_merged %>%
+  inner_join(df_tb2023_agg_acc, by = c("word", "same", "version"))
+
+df_full_rt <- df_merged %>%
+  inner_join(df_tb2023_agg_rt, by = c("word", "same", "version"))
+
+# Sanity check
+nrow(df_sm_acc)
+nrow(df_sm_rt)
+nrow(df_full_acc)
+nrow(df_full_rt)
+```
+
+
+## Part 1: SM on its own
+
+```{r}
+mod_sm_acc = lmer(data = df_sm_acc, 
+                accuracy ~ sensorimotor_distance +
+                  (1 | word))
+
+summary(mod_sm_acc)
+
+
+mod_sm_rt = lmer(data = df_sm_rt, 
+                mean_log_rt ~ sensorimotor_distance +
+                  (1 | word))
+
+summary(mod_sm_rt)
+
+```
+
+
+## Part 2: Comopare to distributional distance
+
+Here, we compare sensorimotor distance to the best-performing distributional distance measure from the RAW-C analysis.
+
+```{r sm_dd_tb2023}
+
+# --- Compute AIC for each model/layer: SM, Distributional, Hybrid ---
+
+tb_acc_results <- df_full_acc %>%
+  group_by(Model, Layer, n_params, Multilingual) %>%
+  summarize(
+    r2_sm       = summary(lm(accuracy ~ sensorimotor_distance))$r.squared,
+    aic_sm      = AIC(lm(accuracy ~ sensorimotor_distance)),
+    r2_bert     = summary(lm(accuracy ~ Distance))$r.squared,
+    aic_bert    = AIC(lm(accuracy ~ Distance)),
+    r2_combined = summary(lm(accuracy ~ Distance + sensorimotor_distance))$r.squared,
+    aic_combined = AIC(lm(accuracy ~ Distance + sensorimotor_distance)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    aic_bert_vs_sm       = aic_bert - aic_sm,
+    aic_combined_vs_sm   = aic_sm - aic_combined,
+    aic_combined_vs_dist = aic_bert - aic_combined
+  )
+
+tb_rt_results <- df_full_rt %>%
+  group_by(Model, Layer, n_params, Multilingual) %>%
+  summarize(
+    r2_sm       = summary(lm(mean_log_rt ~ sensorimotor_distance))$r.squared,
+    aic_sm      = AIC(lm(mean_log_rt ~ sensorimotor_distance)),
+    r2_bert     = summary(lm(mean_log_rt ~ Distance))$r.squared,
+    aic_bert    = AIC(lm(mean_log_rt ~ Distance)),
+    r2_combined = summary(lm(mean_log_rt ~ Distance + sensorimotor_distance))$r.squared,
+    aic_combined = AIC(lm(mean_log_rt ~ Distance + sensorimotor_distance)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    aic_bert_vs_sm       = aic_bert - aic_sm,
+    aic_combined_vs_sm   = aic_sm - aic_combined,
+    aic_combined_vs_dist = aic_bert - aic_combined
+  )
+
+# --- Best layer per model (selected by best distributional R²) ---
+
+best_layers_acc <- tb_acc_results %>%
+  group_by(Model, n_params, Multilingual) %>%
+  slice_max(r2_bert, n = 1) %>%
+  ungroup()
+
+best_layers_rt <- tb_rt_results %>%
+  group_by(Model, n_params, Multilingual) %>%
+  slice_max(r2_bert, n = 1) %>%
+  ungroup()
+
+print(best_layers_acc)
+print(best_layers_rt)
+
+# --- Summary counts ---
+
+best_layers_acc %>%
+  mutate(dist_better_than_sm     = aic_bert_vs_sm < -4,
+         hybrid_better_than_sm   = aic_combined_vs_sm > 4,
+         hybrid_better_than_dist = aic_combined_vs_dist > 4) %>%
+  summarise(across(c(dist_better_than_sm,
+                     hybrid_better_than_sm,
+                     hybrid_better_than_dist), mean))
+
+best_layers_rt %>%
+  mutate(dist_better_than_sm     = aic_bert_vs_sm < -4,
+         hybrid_better_than_sm   = aic_combined_vs_sm > 4,
+         hybrid_better_than_dist = aic_combined_vs_dist > 4) %>%
+  summarise(across(c(dist_better_than_sm,
+                     hybrid_better_than_sm,
+                     hybrid_better_than_dist), mean))
+
+# --- LaTeX tables ---
+
+best_layers_acc %>%
+  select(Model, aic_bert, aic_combined) %>%
+  mutate(across(starts_with("aic"), round)) %>%
+  kbl(col.names = c("Model", "Distributional", "Hybrid"),
+      format = "latex", booktabs = TRUE,
+      caption = sprintf("AIC values for predicting accuracy (Trott \\& Bergen, 2023). AIC for Sensorimotor Distance alone was %.2f.",
+                        unique(best_layers_acc$aic_sm)),
+      label = "aic_tb_acc") %>%
+  kable_styling(latex_options = "hold_position")
+
+best_layers_rt %>%
+  select(Model, aic_bert, aic_combined) %>%
+  mutate(across(starts_with("aic"), round)) %>%
+  kbl(col.names = c("Model", "Distributional", "Hybrid"),
+      format = "latex", booktabs = TRUE,
+      caption = sprintf("AIC values for predicting log RT (Trott \\& Bergen, 2023). AIC for Sensorimotor Distance alone was %.2f.",
+                        unique(best_layers_rt$aic_sm)),
+      label = "aic_tb_rt") %>%
+  kable_styling(latex_options = "hold_position")
+
+# ============================================================
+# Figures: AIC dot plots (matching your existing style)
+# ============================================================
+
+# --- Accuracy ---
+
+aic_long_acc <- best_layers_acc %>%
+  select(Model, Layer, aic_sm, aic_bert, aic_combined) %>%
+  pivot_longer(cols = c(aic_sm, aic_bert, aic_combined),
+               names_to = "type", values_to = "aic") %>%
+  mutate(type = case_when(
+    type == "aic_sm"       ~ "Sensorimotor",
+    type == "aic_bert"     ~ "Distributional",
+    type == "aic_combined" ~ "Hybrid"
+  ),
+  type = factor(type, levels = c("Sensorimotor", "Distributional", "Hybrid")))
+
+baseline_acc <- aic_long_acc %>% filter(type == "Sensorimotor") %>% pull(aic) %>% unique()
+
+aic_long_acc_no_sm <- aic_long_acc %>% filter(type != "Sensorimotor")
+
+aic_se_acc <- aic_long_acc_no_sm %>%
+  group_by(type) %>%
+  summarize(mean_aic = mean(aic),
+            se_aic = sd(aic) / sqrt(n()),
+            .groups = "drop")
+
+# Dynamic offset for the label (5% of y-range above baseline)
+offset_acc <- diff(range(aic_long_acc_no_sm$aic)) * 0.05
+
+ggplot() +
+  geom_hline(yintercept = baseline_acc,
+             linetype = "dashed", color = "coral", linewidth = 1) +
+  geom_jitter(data = aic_long_acc_no_sm,
+              aes(x = type, y = aic, color = type),
+              alpha = 0.3, width = 0.1, size = 2) +
+  geom_point(data = aic_se_acc,
+             aes(x = type, y = mean_aic, color = type),
+             size = 5) +
+  geom_errorbar(data = aic_se_acc,
+                aes(x = type, ymin = mean_aic - se_aic,
+                    ymax = mean_aic + se_aic, color = type),
+                width = 0.15, linewidth = 1.2) +
+  annotate("text", x = 1.5, y = baseline_acc + offset_acc,
+           label = "Sensorimotor", color = "coral", size = 5) +
+  labs(x = NULL, y = "AIC (lower is better)",
+       title = "Predicting Accuracy") +
+  scale_color_manual(values = c("Distributional" = "gray60",
+                                "Hybrid" = "steelblue")) +
+  theme_minimal() +
+  theme(text = element_text(size = 16), legend.position = "none")
+
+# --- RT ---
+
+aic_long_rt <- best_layers_rt %>%
+  select(Model, Layer, aic_sm, aic_bert, aic_combined) %>%
+  pivot_longer(cols = c(aic_sm, aic_bert, aic_combined),
+               names_to = "type", values_to = "aic") %>%
+  mutate(type = case_when(
+    type == "aic_sm"       ~ "Sensorimotor",
+    type == "aic_bert"     ~ "Distributional",
+    type == "aic_combined" ~ "Hybrid"
+  ),
+  type = factor(type, levels = c("Sensorimotor", "Distributional", "Hybrid")))
+
+baseline_rt <- aic_long_rt %>% filter(type == "Sensorimotor") %>% pull(aic) %>% unique()
+
+aic_long_rt_no_sm <- aic_long_rt %>% filter(type != "Sensorimotor")
+
+aic_se_rt <- aic_long_rt_no_sm %>%
+  group_by(type) %>%
+  summarize(mean_aic = mean(aic),
+            se_aic = sd(aic) / sqrt(n()),
+            .groups = "drop")
+
+offset_rt <- diff(range(aic_long_rt_no_sm$aic)) * 0.05
+
+ggplot() +
+  geom_hline(yintercept = baseline_rt,
+             linetype = "dashed", color = "coral", linewidth = 1) +
+  geom_jitter(data = aic_long_rt_no_sm,
+              aes(x = type, y = aic, color = type),
+              alpha = 0.3, width = 0.1, size = 2) +
+  geom_point(data = aic_se_rt,
+             aes(x = type, y = mean_aic, color = type),
+             size = 5) +
+  geom_errorbar(data = aic_se_rt,
+                aes(x = type, ymin = mean_aic - se_aic,
+                    ymax = mean_aic + se_aic, color = type),
+                width = 0.15, linewidth = 1.2) +
+  annotate("text", x = 1.5, y = baseline_rt + offset_rt,
+           label = "Sensorimotor", color = "coral", size = 5) +
+  labs(x = NULL, y = "AIC (lower is better)",
+       title = "Predicting RT") +
+  scale_color_manual(values = c("Distributional" = "gray60",
+                                "Hybrid" = "steelblue")) +
+  theme_minimal() +
+  theme(text = element_text(size = 16), legend.position = "none")
+```
+
+## Part 3: Does SM account for sense boundaries?
+
+```{r}
+
+# --- Compute AIC for each model/layer: same alone vs. same + continuous ---
+
+tb_acc_q3 <- df_full_acc %>%
+  group_by(Model, Layer, n_params, Multilingual) %>%
+  summarize(
+    aic_same      = AIC(lm(accuracy ~ same)),
+    aic_same_sm   = AIC(lm(accuracy ~ same + sensorimotor_distance)),
+    aic_same_dist = AIC(lm(accuracy ~ same + Distance)),
+    aic_same_both = AIC(lm(accuracy ~ same + Distance + sensorimotor_distance)),
+    r2_same_dist  = summary(lm(accuracy ~ same + Distance))$r.squared,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    delta_aic_sm   = aic_same - aic_same_sm,    # positive = SM adds over same
+    delta_aic_dist = aic_same - aic_same_dist,  # positive = Distributional adds over same
+    delta_aic_both = aic_same - aic_same_both   # positive = both add over same
+  )
+
+tb_rt_q3 <- df_full_rt %>%
+  group_by(Model, Layer, n_params, Multilingual) %>%
+  summarize(
+    aic_same      = AIC(lm(mean_log_rt ~ same)),
+    aic_same_sm   = AIC(lm(mean_log_rt ~ same + sensorimotor_distance)),
+    aic_same_dist = AIC(lm(mean_log_rt ~ same + Distance)),
+    aic_same_both = AIC(lm(mean_log_rt ~ same + Distance + sensorimotor_distance)),
+    r2_same_dist  = summary(lm(mean_log_rt ~ same + Distance))$r.squared,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    delta_aic_sm   = aic_same - aic_same_sm,
+    delta_aic_dist = aic_same - aic_same_dist,
+    delta_aic_both = aic_same - aic_same_both
+  )
+
+# --- Best layer per model (selected by best same + Distributional R²) ---
+
+best_layers_acc_q3 <- tb_acc_q3 %>%
+  group_by(Model, n_params, Multilingual) %>%
+  slice_max(r2_same_dist, n = 1) %>%
+  ungroup()
+
+best_layers_rt_q3 <- tb_rt_q3 %>%
+  group_by(Model, n_params, Multilingual) %>%
+  slice_max(r2_same_dist, n = 1) %>%
+  ungroup()
+
+print(best_layers_acc_q3)
+print(best_layers_rt_q3)
+
+# --- Summary counts: how often does each augmentation add over same alone ---
+
+best_layers_acc_q3 %>%
+  mutate(sm_adds   = delta_aic_sm > 4,
+         dist_adds = delta_aic_dist > 4,
+         both_add  = delta_aic_both > 4) %>%
+  summarise(across(c(sm_adds, dist_adds, both_add), mean))
+
+best_layers_rt_q3 %>%
+  mutate(sm_adds   = delta_aic_sm > 4,
+         dist_adds = delta_aic_dist > 4,
+         both_add  = delta_aic_both > 4) %>%
+  summarise(across(c(sm_adds, dist_adds, both_add), mean))
+
+
+make_aic_plot_q3 <- function(best_layers_df, title) {
+  aic_long <- best_layers_df %>%
+    select(Model, Layer, aic_same, aic_same_sm, aic_same_dist, aic_same_both) %>%
+    pivot_longer(cols = c(aic_same, aic_same_sm, aic_same_dist, aic_same_both),
+                 names_to = "type", values_to = "aic") %>%
+    mutate(type = case_when(
+      type == "aic_same"      ~ "Same only",
+      type == "aic_same_sm"   ~ "Same + SM",
+      type == "aic_same_dist" ~ "Same + Distributional",
+      type == "aic_same_both" ~ "Same + Both"
+    ),
+    type = factor(type, levels = c("Same only", "Same + SM",
+                                    "Same + Distributional", "Same + Both")))
+
+  baseline <- aic_long %>% filter(type == "Same only") %>% pull(aic) %>% unique()
+
+  aic_long_no_base <- aic_long %>% filter(type != "Same only")
+
+  aic_se <- aic_long_no_base %>%
+    group_by(type) %>%
+    summarize(mean_aic = mean(aic),
+              se_aic = sd(aic) / sqrt(n()),
+              .groups = "drop")
+
+  offset <- diff(range(aic_long_no_base$aic)) * 0.05
+
+  ggplot() +
+    geom_hline(yintercept = baseline,
+               linetype = "dashed", color = "coral", linewidth = 1) +
+    geom_jitter(data = aic_long_no_base,
+                aes(x = type, y = aic, color = type),
+                alpha = 0.3, width = 0.1, size = 2) +
+    geom_point(data = aic_se,
+               aes(x = type, y = mean_aic, color = type),
+               size = 5) +
+    geom_errorbar(data = aic_se,
+                  aes(x = type, ymin = mean_aic - se_aic,
+                      ymax = mean_aic + se_aic, color = type),
+                  width = 0.15, linewidth = 1.2) +
+    annotate("text", x = 2, y = baseline + offset,
+             label = "Same only", color = "coral", size = 5) +
+    labs(x = NULL, y = "AIC (lower is better)", title = title) +
+    scale_color_manual(values = c("Same + SM" = "coral",
+                                  "Same + Distributional" = "gray60",
+                                  "Same + Both" = "steelblue")) +
+    theme_minimal() +
+    theme(text = element_text(size = 16), legend.position = "none",
+          axis.text.x = element_text(angle = 20, hjust = 1))
+}
+
+make_aic_plot_q3(best_layers_acc_q3, "Predicting Accuracy")
+make_aic_plot_q3(best_layers_rt_q3, "Predicting RT")
+```
+
+
+# Comparison to Trott (2024) LLM Norms
+
+Here, we conduct a more in-depth comparison to the GPT-4-generated norms from Trott (2024).
+
+## Load data
+
+```{r}
+df_gpt_perception = read_csv("../../data/trott2024/cs_norms_perception_gpt-4.csv")
+df_gpt_action = read_csv("../../data/trott2024/cs_norms_action_gpt-4.csv")
+
+df_both_gpt = df_gpt_perception %>%
+  inner_join(df_gpt_action)
+
+df_gpt_with_human = df_both_gpt %>%
+  inner_join(df_contextualized_meanings)
+
+
+
+### RAW-C With GPT and human SM distance
+df_rawc_with_sm = read_csv("../../data/trott2024/rawc_with_sm.csv")
+
+```
+
+## Dimension-level correlation
+
+```{r gpt_corrs}
+df_summ = df_gpt_with_human %>%
+  summarise(Vision = cor(Vision.M, Vision, method = "spearman"),
+            Hearing = cor(Hearing.M, Hearing, method = "spearman"),
+            Touch = cor(Touch.M, Touch, method = "spearman"),
+            Olfaction = cor(Olfaction.M, Olfaction, method = "spearman"),
+            Taste = cor(Taste.M, Taste, method = "spearman"),
+            Interoception = cor(Interoception.M, Interoception, method = "spearman"),
+            Hand_arm = cor(Hand_arm.M, Hand_arm, method = "spearman"),
+            Foot_leg = cor(Foot_leg.M, Foot_leg, method = "spearman"),
+            Head = cor(Head.M, Head, method = "spearman"),
+            Torso = cor(Torso.M, Torso, method = "spearman"),
+            Mouth_throat = cor(Mouth_throat.M, Mouth_throat, method = "spearman"))
+
+df_summ
+
+df_long = df_summ %>%
+  pivot_longer(everything(), names_to = "Factor", values_to = "Correlation")
+
+df_long %>%
+  ggplot(aes(x = reorder(Factor, Correlation), y = Correlation)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Factor", y = "Correlation") +
+  theme_minimal()
+```
+
+
+
+## Compare correlation matrices
+
+```{r gpt_corrs_comparison}
+
+library(tidyverse)
+library(ggcorrplot)
+library(patchwork)
+
+dim_order <- c("Vision", "Hearing", "Olfaction", "Taste", "Interoception", 
+               "Touch", "Mouth_throat", "Head", "Torso", "Hand_arm", "Foot_leg")
+
+# Human matrix: .M columns
+human_cols <- df_gpt_with_human %>%
+  select(all_of(paste0(dim_order, ".M"))) %>%
+  rename_with(~ str_remove(., "\\.M"))
+cors_human <- cor(human_cols, use = "pairwise.complete.obs")
+
+# GPT matrix: bare-named columns
+gpt_cols <- df_gpt_with_human %>%
+  select(all_of(dim_order))
+cors_gpt <- cor(gpt_cols, use = "pairwise.complete.obs")
+
+# Difference (GPT - Human)
+cors_diff <- cors_gpt - cors_human
+
+ggcorrplot(cors_human, hc.order = FALSE, type = "upper",
+                      lab = TRUE, lab_size = 2.5) +
+  ggtitle("Human") +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1))
+
+ggcorrplot(cors_gpt, hc.order = FALSE, type = "upper",
+                    lab = TRUE, lab_size = 2.5) +
+  ggtitle("GPT-4") +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1))
+
+ggcorrplot(cors_diff, hc.order = FALSE, type = "upper",
+                     lab = TRUE, lab_size = 2.5,
+                     colors = c("#2166AC", "white", "#B2182B")) +
+  ggtitle("GPT − Human") +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1))
+
+
+
+### Statistical comparison
+library(vegan)
+
+
+# Mantel test
+mantel_result <- mantel(cors_human, cors_gpt, 
+                        method = "pearson",   # or "spearman"
+                        permutations = 9999)
+
+mantel_result
+mantel_result <- mantel(cors_human, cors_gpt, 
+                        method = "spearman",   # or "spearman"
+                        permutations = 9999)
+
+mantel_result
+
+
+## Or just straight-up correlation
+upper_human <- cors_human[upper.tri(cors_human)]
+upper_gpt   <- cors_gpt[upper.tri(cors_gpt)]
+
+# Correlation between the two
+cor(upper_human, upper_gpt, method = "pearson")
+cor(upper_human, upper_gpt, method = "spearman")
+
+```
+
+## Substitution analyses
+
+
+### Homonymy vs. Polysemy
+
+Here, we ask whether homonyms show bigger sensorimotor distance for GPT-generated norms as well.
+
+```{r}
+
+model_full = lmer(data = df_rawc_with_sm,
+                  sm_gpt ~ same +
+                    (1 + same | word),
+                  control=lmerControl(optimizer="bobyqa"),
+                  REML = FALSE)
+
+model_reduced = lmer(data = df_rawc_with_sm,
+                  sm_gpt ~ # same +
+                    (1 + same | word),
+                  control=lmerControl(optimizer="bobyqa"),
+                  REML = FALSE)
+
+summary(model_full)
+anova(model_full, model_reduced)
+
+
+model_full_at = lmer(data = df_rawc_with_sm,
+                  sm_gpt ~ same * ambiguity_type +
+                    (1 + same | word),
+                  control=lmerControl(optimizer="bobyqa"),
+                  REML = FALSE)
+
+model_reduced_at = lmer(data = df_rawc_with_sm,
+                  sm_gpt ~ same + ambiguity_type +
+                    (1 + same | word),
+                  control=lmerControl(optimizer="bobyqa"),
+                  REML = FALSE)
+
+summary(model_full_at)
+anova(model_full_at, model_reduced_at)
+
+
+df_rawc_with_sm %>%
+  group_by(same, ambiguity_type) %>%
+  summarise(mean_gpt = mean(sm_gpt),
+            sd_gpt = sd(sm_gpt),
+            mean_human = mean(sm_human),
+            sd_human = sd(sm_human))
+
+```
+
+
+### Dominance
+
+We also replicate the dominance analysis.
+
+```{r gpt_sm_strength}
+
+df_dom_gpt = df_gpt_with_human %>%
+  inner_join(df_dominance_individual)
+
+
+df_dom_gpt <- df_dom_gpt %>%
+  inner_join(df_lancaster)
+
+nrow(df_dom_gpt)
+
+
+df_dom_gpt = df_dom_gpt %>%
+  rowwise() %>%
+  mutate(max_strength_gpt = max(
+    c(
+      ## Modalities
+      Vision,
+      Hearing,
+      Olfaction,
+      Touch,
+      Taste, 
+      Interoception,
+      ## Effectors
+      Head,
+      Mouth_throat,
+      Torso,
+      Hand_arm,
+      Foot_leg
+    )
+  ),
+  minkowski3_strength_gpt = sum(c(Vision,
+      Hearing,
+      Olfaction,
+      Touch,
+      Taste, 
+      Interoception,
+      ## Effectors
+      Head,
+      Mouth_throat,
+      Torso,
+      Hand_arm,
+      Foot_leg)^3)^(1/3),
+max_strength = max(
+    c(
+      ## Modalities
+      Vision.M,
+      Hearing.M,
+      Olfaction.M,
+      Touch.M,
+      Taste.M, 
+      Interoception.M,
+      ## Effectors
+      Head.M,
+      Mouth_throat.M,
+      Torso.M,
+      Hand_arm.M,
+      Foot_leg.M
+    )
+  ),
+  minkowski3_strength = sum(c(Vision.M, Hearing.M, Olfaction.M, Touch.M, Taste.M,
+                               Interoception.M, Head.M, Mouth_throat.M, Torso.M,
+                               Hand_arm.M, Foot_leg.M)^3)^(1/3)
+  ) %>%
+  ungroup()
+
+
+
+cor.test(df_dom_gpt$max_strength_gpt, df_dom_gpt$max_strength)
+cor.test(df_dom_gpt$minkowski3_strength_gpt, df_dom_gpt$minkowski3_strength)
+
+df_dom_gpt %>%
+  ggplot(aes(x = minkowski3_strength_gpt,
+             y = minkowski3_strength)) +
+  geom_point(alpha = .5) +
+  geom_smooth(method = "lm") +
+  labs(y = "Minkowski-3 Strength (GPT-4)",
+       x = "Minkowski-3 Strength (Human)") +
+  theme_minimal() +
+  theme(text = element_text(size = 16), legend.position = "none")
+
+
+```
+
+
+### Does GPT sensorimotor strength predict dominance?
+
+
+```{r gpt_dominance}
+
+  
+df_dom_gpt %>%
+  ggplot(aes(x = minkowski3_strength,
+             y = dominance)) +
+  geom_point(alpha = .4) +
+  geom_smooth(method = "lm") +
+  labs(x = "Minkowski-3 Sensorimotor Strength (GPT-4)",
+       y = "Dominance") +
+  theme_minimal() +
+  theme(text = element_text(size=16))
+
+model_full = lmer(data = df_dom_gpt,
+                dominance ~ 
+                  max_strength_gpt +
+                  Max_strength.sensorimotor + Minkowski3.sensorimotor +
+                  (1 | word),
+                REML = FALSE)
+
+model_reduced = lmer(data = df_dom_gpt,
+                dominance ~ 
+                  # max_strength_gpt + 
+                  Max_strength.sensorimotor + Minkowski3.sensorimotor +
+                  (1 | word),
+                REML = FALSE)
+summary(model_full)
+anova(model_full, model_reduced)
+
+
+
+
+model_full = lmer(data = df_dom_gpt,
+                dominance ~ 
+                  minkowski3_strength_gpt +
+                  Max_strength.sensorimotor + Minkowski3.sensorimotor +
+                  (1 | word),
+                REML = FALSE)
+
+model_reduced = lmer(data = df_dom_gpt,
+                dominance ~ 
+                  # minkowski3_strength_gpt + 
+                  Max_strength.sensorimotor + Minkowski3.sensorimotor +
+                  (1 | word),
+                REML = FALSE)
+summary(model_full)
+anova(model_full, model_reduced)
+
+```
 
