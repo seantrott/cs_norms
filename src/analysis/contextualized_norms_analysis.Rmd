@@ -2428,6 +2428,38 @@ df_rawc_with_sm %>%
             mean_human = mean(sm_human),
             sd_human = sd(sm_human))
 
+
+
+df_rawc_with_sm = df_rawc_with_sm %>%
+  mutate(Same = case_when(
+    same == TRUE ~ "Same Sense",
+    same == FALSE ~ "Different Sense"
+  ))
+
+
+
+
+df_rawc_with_sm %>%
+  ggplot(aes(x = sm_gpt,
+             y = ambiguity_type,
+             fill = Same)) +
+  geom_density_ridges2(aes(height = ..density..), 
+                       color = NA,
+                       alpha = 0.5, 
+                       scale=0.85, 
+                       stat="density") +
+  labs(x = "Sensorimotor Distance (GPT-4)",
+       y = NULL,
+       fill = NULL) +
+  scale_fill_manual(
+    values = c("Same Sense" = viridisLite::viridis(2, option = "mako", begin = 0.8, end = 0.15)[1],
+               "Different Sense" = viridisLite::viridis(2, option = "mako", begin = 0.8, end = 0.15)[2])
+  ) + 
+  theme_minimal() +
+  theme(text = element_text(size = 20))
+
+
+
 ```
 
 
