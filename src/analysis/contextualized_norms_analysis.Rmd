@@ -268,7 +268,7 @@ df_dom_plus_sm %>%
              y = dominance)) +
   geom_point(alpha = .4) +
   geom_smooth(method = "lm") +
-  labs(x = "Aggregate Sensorimotor Strength (Minkowski)",
+  labs(x = "Minkowski-3 Sensorimotor Strength",
        y = "Dominance") +
   theme_minimal() +
   theme(text = element_text(size=16))
@@ -2543,8 +2543,8 @@ df_dom_gpt %>%
              y = minkowski3_strength)) +
   geom_point(alpha = .5) +
   geom_smooth(method = "lm") +
-  labs(y = "Minkowski-3 Strength (GPT-4)",
-       x = "Minkowski-3 Strength (Human)") +
+  labs(x = "Minkowski-3 Strength (GPT-4)",
+       y = "Minkowski-3 Strength (Human)") +
   theme_minimal() +
   theme(text = element_text(size = 16), legend.position = "none")
 
